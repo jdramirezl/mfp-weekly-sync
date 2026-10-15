@@ -1,0 +1,258 @@
+{
+  "$defs": {
+    "DayPlan": {
+      "additionalProperties": false,
+      "description": "One calendar day with its four meal buckets.",
+      "properties": {
+        "date": {
+          "format": "date",
+          "title": "Date",
+          "type": "string"
+        },
+        "meals": {
+          "additionalProperties": {
+            "items": {
+              "$ref": "#/$defs/PlanEntry"
+            },
+            "type": "array"
+          },
+          "propertyNames": {
+            "$ref": "#/$defs/MealCategory"
+          },
+          "title": "Meals",
+          "type": "object"
+        }
+      },
+      "required": [
+        "date"
+      ],
+      "title": "DayPlan",
+      "type": "object"
+    },
+    "Macros": {
+      "additionalProperties": false,
+      "description": "Optional per-entry nutrition the plan author expects (for validation only).\n\nThese are the *planned* values. They are kept strictly separate from what\nMyFitnessPal actually stores for the matched food (see nutrition.py).",
+      "properties": {
+        "calories": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Calories"
+        },
+        "protein_g": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Protein G"
+        },
+        "carbs_g": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Carbs G"
+        },
+        "fat_g": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Fat G"
+        }
+      },
+      "title": "Macros",
+      "type": "object"
+    },
+    "MealCategory": {
+      "description": "The four meal categories the free MyFitnessPal tier exposes.\n\nMyFitnessPal's API uses capitalized names (Breakfast/Lunch/Dinner/Snacks).\nWe normalize to lowercase internally and map at the backend boundary.",
+      "enum": [
+        "breakfast",
+        "lunch",
+        "dinner",
+        "snack"
+      ],
+      "title": "MealCategory",
+      "type": "string"
+    },
+    "PlanEntry": {
+      "additionalProperties": false,
+      "description": "A single planned food item within a meal.",
+      "properties": {
+        "entry_id": {
+          "description": "Stable ID unique within the plan.",
+          "minLength": 1,
+          "title": "Entry Id",
+          "type": "string"
+        },
+        "food": {
+          "description": "Display name used for searching/matching.",
+          "minLength": 1,
+          "title": "Food",
+          "type": "string"
+        },
+        "quantity": {
+          "description": "Amount in `unit`.",
+          "exclusiveMinimum": 0,
+          "title": "Quantity",
+          "type": "number"
+        },
+        "unit": {
+          "default": "serving",
+          "description": "Measurement unit.",
+          "title": "Unit",
+          "type": "string"
+        },
+        "mfp_food_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Mfp Food Id"
+        },
+        "serving_id": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Serving Id"
+        },
+        "serving_description": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Serving Description"
+        },
+        "brand": {
+          "anyOf": [
+            {
+              "type": "string"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Brand"
+        },
+        "expected_calories": {
+          "anyOf": [
+            {
+              "minimum": 0,
+              "type": "number"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null,
+          "title": "Expected Calories"
+        },
+        "expected_macros": {
+          "anyOf": [
+            {
+              "$ref": "#/$defs/Macros"
+            },
+            {
+              "type": "null"
+            }
+          ],
+          "default": null
+        }
+      },
+      "required": [
+        "entry_id",
+        "food",
+        "quantity"
+      ],
+      "title": "PlanEntry",
+      "type": "object"
+    }
+  },
+  "additionalProperties": false,
+  "description": "The top-level weekly plan document.",
+  "properties": {
+    "schema_version": {
+      "default": 1,
+      "title": "Schema Version",
+      "type": "integer"
+    },
+    "timezone": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "title": "Timezone"
+    },
+    "plan_id": {
+      "anyOf": [
+        {
+          "type": "string"
+        },
+        {
+          "type": "null"
+        }
+      ],
+      "default": null,
+      "description": "Stable identifier for this plan. Derived from the filename if omitted.",
+      "title": "Plan Id"
+    },
+    "days": {
+      "items": {
+        "$ref": "#/$defs/DayPlan"
+      },
+      "minItems": 1,
+      "title": "Days",
+      "type": "array"
+    }
+  },
+  "title": "MyFitnessPal Weekly Meal Plan",
+  "type": "object",
+  "$schema": "https://json-schema.org/draft/2020-12/schema"
+}

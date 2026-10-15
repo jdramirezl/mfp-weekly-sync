@@ -1,0 +1,114 @@
+{
+  "schema_version": 1,
+  "timezone": "America/Mexico_City",
+  "plan_id": "weekly_plan_2026-10-19",
+  "days": [
+    {
+      "date": "2026-10-19",
+      "meals": {
+        "breakfast": [
+          {
+            "entry_id": "mon-breakfast-oats",
+            "food": "Oatmeal, dry",
+            "quantity": 40,
+            "unit": "g",
+            "expected_calories": 156,
+            "expected_macros": { "protein_g": 6.8, "carbs_g": 26.5, "fat_g": 2.8 }
+          },
+          {
+            "entry_id": "mon-breakfast-banana",
+            "food": "Banana, raw",
+            "quantity": 1,
+            "unit": "medium",
+            "expected_calories": 105
+          }
+        ],
+        "lunch": [
+          {
+            "entry_id": "mon-lunch-chicken",
+            "food": "Chicken breast, cooked",
+            "quantity": 125,
+            "unit": "g",
+            "expected_calories": 206,
+            "expected_macros": { "protein_g": 38.8, "carbs_g": 0, "fat_g": 4.5 }
+          },
+          {
+            "entry_id": "mon-lunch-rice",
+            "food": "White rice, cooked",
+            "quantity": 150,
+            "unit": "g",
+            "expected_calories": 195
+          }
+        ],
+        "dinner": [],
+        "snack": []
+      }
+    },
+    {
+      "date": "2026-10-20",
+      "meals": {
+        "breakfast": [
+          {
+            "entry_id": "tue-breakfast-oats",
+            "food": "Oatmeal, dry",
+            "quantity": 50,
+            "unit": "g"
+          }
+        ],
+        "lunch": [
+          {
+            "entry_id": "tue-lunch-rice",
+            "food": "White rice, cooked",
+            "quantity": 1,
+            "unit": "cup"
+          }
+        ],
+        "dinner": [
+          {
+            "entry_id": "tue-dinner-chicken",
+            "food": "Chicken breast, cooked",
+            "quantity": 150,
+            "unit": "g"
+          }
+        ],
+        "snack": [
+          {
+            "entry_id": "tue-snack-banana",
+            "food": "Banana, raw",
+            "quantity": 1,
+            "unit": "medium"
+          }
+        ]
+      }
+    },
+    {
+      "date": "2026-10-21",
+      "meals": {
+        "breakfast": [
+          {
+            "entry_id": "wed-breakfast-banana",
+            "food": "Banana, raw",
+            "quantity": 2,
+            "unit": "medium"
+          }
+        ],
+        "lunch": [
+          {
+            "entry_id": "wed-lunch-chicken",
+            "food": "Chicken breast, cooked",
+            "quantity": 120,
+            "unit": "g"
+          },
+          {
+            "entry_id": "wed-lunch-rice",
+            "food": "White rice, cooked",
+            "quantity": 180,
+            "unit": "g"
+          }
+        ],
+        "dinner": [],
+        "snack": []
+      }
+    }
+  ]
+}

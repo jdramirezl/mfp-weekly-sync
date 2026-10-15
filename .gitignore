@@ -1,0 +1,31 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+build/
+dist/
+.venv/
+venv/
+.env
+
+# Tooling
+.pytest_cache/
+.ruff_cache/
+.coverage
+htmlcov/
+coverage.xml
+
+# Local application state — NEVER commit these (contain diary data / tokens)
+*.sqlite
+*.sqlite3
+*.db
+mfp-sync-state/
+.mfp-sync/
+session.json
+creds.json
+config/settings.toml
+secrets.toml
+
+# OS
+.DS_Store
