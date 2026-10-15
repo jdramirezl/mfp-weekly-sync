@@ -43,6 +43,12 @@ class EngineSession:
     def load(self, plan_path: str | Path):
         return load_plan(plan_path)
 
+    def load_dict(self, plan_obj: Any):
+        """Validate a plan supplied as a dict (for the MCP *_json tools)."""
+        from .planner import load_plan_dict
+
+        return load_plan_dict(plan_obj)
+
     def close(self) -> None:
         try:
             self.backend.close()

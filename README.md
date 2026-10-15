@@ -25,21 +25,35 @@ ChatGPT  →  meal_plan.json  →  mfp-sync preview  →  mfp-sync apply  →  M
 - **Agent-friendly.** `--json` output, stable error codes, a JSON Schema for the
   plan, and a `--non-interactive` mode.
 
-> ⚠️ **Live sync status:** the live MyFitnessPal backend uses the undocumented,
-> reverse-engineered mobile API via [`mfp-api`](https://github.com/Rift-Walker/mfp-api).
-> Its read/write/delete have been verified against the mock backend and are
-> designed from `mfp-api`'s own live-verified round-trips, but **live writes to a
-> real account have not been exercised in this environment.** See
-> [docs/architecture.md](docs/architecture.md). Until you verify it against your
-> own account (`doctor` + a single confirmed test entry), treat live sync as
-> *unverified*.
+> ⚠️ **Live sync status.** Two live backends exist (see "Backends" below). The
+> **`cookie-session`** backend (for Google/Apple SSO accounts) has been
+> **verified end-to-end against a real MyFitnessPal account** — authentication,
+> diary read, food search, a confirmed single write + read-back, delete, and
+> idempotent re-runs. The **`myfitnesspal`** (username/password) backend's
+> credential-free steps are verified but its credentialed path is untested (no
+> password account was available). The underlying mobile/web APIs are
+> undocumented and reverse-engineered, so treat them as subject to change. See
+> [docs/architecture.md](docs/architecture.md) for the full validation record.
+
+## Backends
+
+| Backend | For | Auth | Install extra |
+|---|---|---|---|
+| `mock` (default) | offline use, tests | none | — |
+| `cookie-session` | **Google/Apple SSO logins** (no password) | your existing Chrome session (macOS) | `.[cookie]` |
+| `myfitnesspal` | username/password logins | native mobile OAuth | `mfp-api` (git) |
+
+Select with `--backend <name>` on any command, or `MFP_SYNC_BACKEND=<name>`.
+If you sign in to MyFitnessPal with "Continue with Google", use `cookie-session`
+— there is no password for the `myfitnesspal` backend to use.
 
 ## Requirements
 
-- **Python 3.10–3.12.** (Not 3.13+: the live backend's transitive `lxml`/scraper
-  dependencies lack wheels there.)
-- macOS, Linux, or Windows. All examples use a POSIX shell.
-- The live backend additionally needs the `mfp-api` package (git install, below).
+- **Python 3.10–3.12.** (Not 3.13+: a transitive dependency lacks wheels there.)
+- macOS, Linux, or Windows for `mock`. The `cookie-session` backend's Chrome
+  cookie extraction is **macOS-only**.
+- `cookie-session` needs the `.[cookie]` extra (`cryptography` + `httpx`);
+  `myfitnesspal` needs the `mfp-api` package (git install, below).
 
 ## 1. Installation from scratch
 
@@ -57,7 +71,13 @@ pip install -e .
 # (Optional) dev tools for tests + linting
 pip install -e ".[dev]"
 
-# (Optional) the LIVE MyFitnessPal backend — only if you want real writes
+# (Optional) cookie-session backend — for Google/SSO accounts (macOS)
+pip install -e ".[cookie]"
+
+# (Optional) MCP server — expose the tool to AI agents
+pip install -e ".[mcp]"
+
+# (Optional) the username/password LIVE backend
 pip install "git+https://github.com/Rift-Walker/mfp-api"
 # NOTE: if you created the venv with `uv venv` (no bundled pip), use:
 #   uv pip install "git+https://github.com/Rift-Walker/mfp-api"
@@ -71,11 +91,26 @@ mfp-sync version
 mfp-sync doctor            # uses the safe mock backend by default
 ```
 
-## 2. Authentication (live backend only)
+## 2. Authentication (live backends only)
 
-The default `mock` backend needs no credentials. For live sync, set your
-MyFitnessPal credentials in the environment — they never leave your machine and
-are never needed by any agent:
+The default `mock` backend needs no credentials. Credentials/sessions stay on
+your machine and are never needed by any agent.
+
+**Google / Apple SSO account (no password) — `cookie-session`:**
+
+```bash
+pip install -e ".[cookie]"
+# Log into myfitnesspal.com in Chrome first, then:
+mfp-sync --backend cookie-session doctor   # read-only; triggers a one-time
+                                           # macOS Keychain prompt — click
+                                           # "Always Allow"
+```
+It reuses your existing Chrome session: it reads the MyFitnessPal cookies,
+exchanges them for a bearer token, and calls the same v2 API. Expired sessions
+are detected with a clear "log in again" message; multiple Chrome profiles are
+searched automatically (or pass one explicitly in code). macOS + Chrome only.
+
+**Username/password account — `myfitnesspal`:**
 
 ```bash
 cp .env.example .env       # then edit MFP_USERNAME / MFP_PASSWORD
@@ -83,7 +118,31 @@ set -a; source .env; set +a
 mfp-sync --backend myfitnesspal doctor     # read-only check, never writes
 ```
 
-Full details, session expiry, and MFA/CAPTCHA notes: [docs/authentication.md](docs/authentication.md).
+Full details, session expiry, profiles, and the SSO-vs-password distinction:
+[docs/authentication.md](docs/authentication.md).
+
+## Connecting an AI agent (MCP server)
+
+An MCP server (`mfp-sync-mcp`) exposes the operations as agent tools, so
+ChatGPT Desktop, Claude Desktop, Cursor, or Kiro can preview and apply plans.
+
+```bash
+pip install -e ".[mcp]"
+mfp-sync-mcp                      # stdio transport (local subprocess) — safe default
+```
+
+Tools: `plan_schema`, `doctor`, `preview_plan` / `preview_plan_json`,
+`status_plan`, `resolve_plan`, `export_diary`, `apply_plan` / `apply_plan_json`.
+The `*_json` variants take a complete plan **object** (no file needed), and
+`apply_plan_json` **requires `confirm=true`** before it writes — otherwise it
+returns a preview. Re-running is idempotent and manual diary changes are
+preserved.
+
+For ChatGPT web, run a token-gated HTTP transport behind a tunnel — the HTTP
+transport refuses to start without `MFP_MCP_TOKEN` and rejects any request that
+doesn't present the bearer token. Full setup for every client, including the
+security model: [docs/mcp.md](docs/mcp.md).
+
 
 ## 3. Generating a weekly plan
 
@@ -217,30 +276,37 @@ mfp-weekly-sync/
 ├── README.md
 ├── .env.example
 ├── .gitignore
+├── .github/workflows/ci.yml   # pytest + ruff on every push / PR
 ├── config/settings.example.toml
 ├── examples/weekly_plan.json
 ├── src/mfp_sync/
-│   ├── cli.py              # Typer CLI (the only module that prints)
+│   ├── cli.py              # Typer CLI (core user interface)
+│   ├── mcp_server.py       # MCP server (thin wrapper over the engine)
+│   ├── serialize.py        # shared JSON contract + EngineSession (CLI & MCP)
 │   ├── models.py           # Pydantic plan models + validation + units
 │   ├── config.py           # settings precedence
-│   ├── planner.py          # load/validate JSON+CSV; JSON Schema
+│   ├── planner.py          # load/validate JSON (file + dict) + CSV; JSON Schema
 │   ├── resolver.py         # food name -> (food_id, serving), catalog-first
 │   ├── nutrition.py        # honest conversions + planned-vs-matched checks
 │   ├── reconciliation.py   # three-way diff -> actions (safety core)
 │   ├── writer.py           # safe mutations: retries, read-after-write, crash-safe
 │   ├── storage.py          # SQLite: food catalog + sync ledger
+│   ├── browser_cookies.py  # macOS Chrome cookie extraction (cookie-session)
 │   ├── errors.py           # error codes <-> exit codes
 │   ├── schema/weekly_plan.schema.json
 │   └── backends/
-│       ├── base.py         # DiaryBackend contract
-│       ├── mock.py         # deterministic backend (tests/offline)
-│       └── myfitnesspal.py # live backend (adapts mfp-api)
-├── tests/                  # pytest suite (mock backend only)
+│       ├── base.py            # DiaryBackend contract
+│       ├── mock.py            # deterministic backend (tests/offline)
+│       ├── myfitnesspal.py    # live backend (username/password, mfp-api)
+│       └── cookie_session.py  # live backend (browser session, SSO accounts)
+├── tests/                  # pytest suite (mock backend only; never your account)
 └── docs/
     ├── architecture.md
     ├── authentication.md
     ├── troubleshooting.md
-    └── agent-integration.md
+    ├── agent-integration.md
+    ├── chatgpt-prompt.md
+    └── mcp.md
 ```
 
 ## License

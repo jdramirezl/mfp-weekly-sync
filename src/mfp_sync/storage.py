@@ -210,6 +210,19 @@ class Storage:
         ).fetchall()
         return [_row_to_sync(r) for r in rows]
 
+    def claimed_remote_ids(self) -> set[str]:
+        """Remote diary entry IDs already owned by SOME sync record (any plan).
+
+        Used by recovery to avoid adopting a remote entry that is already
+        tracked as belonging to a different managed entry — such an entry is
+        not evidence that *this* pending write succeeded.
+        """
+        rows = self._conn.execute(
+            "SELECT remote_entry_id FROM sync_record "
+            "WHERE remote_entry_id IS NOT NULL AND remote_entry_id != ''"
+        ).fetchall()
+        return {r["remote_entry_id"] for r in rows}
+
     def new_record(
         self,
         *,

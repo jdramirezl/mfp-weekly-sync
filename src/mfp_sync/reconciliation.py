@@ -124,6 +124,10 @@ class Reconciler:
             entries = self._backend.get_diary(date)
             remote_by_date[date] = {e.remote_id: e for e in entries}
 
+        # Remote entries already owned by some sync record. Recovery must not
+        # adopt one of these as evidence that a different pending write landed.
+        claimed = self._storage.claimed_remote_ids()
+
         for date, cat, entry in plan.all_entries():
             resolution = self._resolver.resolve(entry)
             action = self._decide(
@@ -133,6 +137,7 @@ class Reconciler:
                 resolution=resolution,
                 remote=remote_by_date.get(date, {}),
                 restore_deleted=restore_deleted,
+                claimed_remote_ids=claimed,
             )
             sync_plan.actions.append(action)
 
@@ -148,12 +153,14 @@ class Reconciler:
         resolution: Resolution,
         remote: dict[str, DiaryEntry],
         restore_deleted: bool,
+        claimed_remote_ids: set[str] | None = None,
     ) -> PlannedAction:
         entry = resolution.entry
         base = dict(
             date=date, meal=meal, source_entry_id=entry.entry_id,
             food_name=entry.food, resolution=resolution,
         )
+        claimed_remote_ids = claimed_remote_ids or set()
 
         if not resolution.ok:
             return PlannedAction(
@@ -173,23 +180,46 @@ class Reconciler:
 
         # A record that never got a confirmed remote id (write failed, was
         # pending at a crash, or came back uncertain) is NOT a manual deletion.
-        # Re-add it only if we can't already see a matching entry remotely; if
-        # we can (e.g. an uncertain write that actually committed), skip to
-        # avoid a duplicate.
+        # Recovery must decide between re-adding and adopting an existing remote
+        # entry — WITHOUT ever claiming a manually-created entry.
+        #
+        # Safe ownership evidence requires exactly ONE unclaimed remote entry
+        # matching this plan item's fingerprint:
+        #   * 0 matches            -> nothing landed; re-add.
+        #   * 1 unclaimed match    -> adopt it (the pending write did land).
+        #   * >1 unclaimed matches -> ambiguous; we cannot tell ours from a
+        #                             manual duplicate. Report UNCERTAIN and do
+        #                             NOT write (re-adding risks a duplicate,
+        #                             adopting risks claiming a manual entry).
         if not record.remote_entry_id:
             if record.status in (SYNC_STATUS_FAILED, SYNC_STATUS_PENDING, SYNC_STATUS_UNCERTAIN):
-                dup = self._find_matching_remote(resolution, remote, base["meal"])
-                if dup is not None:
+                matches = self._matching_remote(
+                    resolution, remote, base["meal"], claimed_remote_ids
+                )
+                if len(matches) == 1:
                     return PlannedAction(
                         action=ActionType.SKIP, nutrition=nutrition,
-                        existing_remote_id=dup.remote_id,
-                        detail=f"prior write was {record.status}; matching entry found "
-                               f"remotely, treating as already synced",
+                        existing_remote_id=matches[0].remote_id,
+                        detail=f"prior write was {record.status}; exactly one unclaimed "
+                               "matching entry found remotely, adopting it as synced",
+                        **base,
+                    )
+                if len(matches) > 1:
+                    return PlannedAction(
+                        action=ActionType.UNCERTAIN,
+                        detail=(
+                            f"prior write was {record.status} and {len(matches)} "
+                            "identical unclaimed entries exist remotely — cannot tell "
+                            "which (if any) is ours without a stable id. Not writing, "
+                            "to avoid duplicating or claiming a manual entry. Resolve "
+                            "by hand in MyFitnessPal, then re-run."
+                        ),
                         **base,
                     )
                 return PlannedAction(
                     action=ActionType.ADD, nutrition=nutrition,
-                    detail=f"retrying prior {record.status} write", **base,
+                    detail=f"retrying prior {record.status} write "
+                           "(no matching remote entry found)", **base,
                 )
 
         # We have a record with a remote id. Where is its remote entry now?
@@ -235,24 +265,37 @@ class Reconciler:
             detail="previously deleted in MyFitnessPal; honoring deletion", **base,
         )
 
-    def _find_matching_remote(
-        self, resolution: Resolution, remote: dict[str, DiaryEntry], meal: str
-    ) -> DiaryEntry | None:
-        """Best-effort: find a remote entry that matches this resolved plan item
-        (same meal, food id, and servings). Used to avoid duplicating an entry
-        whose prior write outcome was uncertain."""
+    def _matching_remote(
+        self,
+        resolution: Resolution,
+        remote: dict[str, DiaryEntry],
+        meal: str,
+        claimed_remote_ids: set[str],
+    ) -> list[DiaryEntry]:
+        """All remote entries that plausibly match this resolved plan item AND
+        are not already owned by another sync record.
+
+        Match = same meal, food id, servings, and serving unit. Claimed entries
+        (tracked by some sync record) are excluded: such an entry belongs to a
+        different managed item and is never evidence that THIS write landed.
+        Returns every match so the caller can require an unambiguous single one.
+        """
         food = resolution.food
         sel = resolution.selection
         if food is None or sel is None:
-            return None
+            return []
+        out: list[DiaryEntry] = []
         for e in remote.values():
+            if e.remote_id in claimed_remote_ids:
+                continue
             if (
                 e.meal == meal
                 and e.food_id == food.food_id
                 and abs(e.servings - sel.servings) <= 1e-6
+                and e.serving_unit == sel.serving.unit
             ):
-                return e
-        return None
+                out.append(e)
+        return out
 
     def _decide_no_stable_ids(
         self, base: dict, resolution: Resolution, remote: dict[str, DiaryEntry]

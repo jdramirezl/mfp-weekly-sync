@@ -64,6 +64,42 @@ def _settings(backend: str | None, home: str | None, on_conflict: str | None):
     return build_settings(backend=backend, home=home, on_conflict=on_conflict)
 
 
+def _preview(eng, plan, *, restore_deleted: bool) -> dict[str, Any]:
+    """Build and serialize a sync plan (no mutations). Shared by both preview
+    tools so file-path and JSON-object inputs behave identically."""
+    sync_plan = eng.reconciler.build_plan(plan, restore_deleted=restore_deleted)
+    return ok_envelope(**plan_to_dict(sync_plan))
+
+
+def _apply(eng, plan, *, restore_deleted: bool) -> dict[str, Any]:
+    """Reconcile + apply a plan through the existing safe writer engine.
+
+    Agent-safe: refuses while any food is unresolved, and never overwrites a
+    manual edit (confirm_conflict always returns False; set on_conflict via
+    settings to change that deliberately). Shared by both apply tools."""
+    sync_plan = eng.reconciler.build_plan(plan, restore_deleted=restore_deleted)
+
+    unresolved = sync_plan.unresolved()
+    if unresolved:
+        return {
+            "ok": False,
+            "error_code": ErrorCode.UNRESOLVED_FOODS.value,
+            "error": f"{len(unresolved)} entries unresolved; resolve them first",
+            "unresolved": [a.source_entry_id for a in unresolved],
+        }
+
+    mutating = [a for a in sync_plan.actions if a.mutates]
+    if not mutating:
+        return ok_envelope(
+            message="nothing to apply; diary already matches the plan",
+            result=empty_result_dict(),
+        )
+
+    result = eng.reconciler.apply(sync_plan, confirm_conflict=lambda a: False)
+    code = ErrorCode.OK.value if result.ok else ErrorCode.WRITE_UNCERTAIN.value
+    return {"ok": result.ok, "error_code": code, "result": apply_result_to_dict(result)}
+
+
 def _guard(fn):
     """Wrap a tool body so any MfpSyncError becomes the standard error envelope.
 
@@ -140,12 +176,28 @@ def build_mcp(
         home: str | None = None,
         restore_deleted: bool = False,
     ) -> dict[str, Any]:
-        """Show the exact sync operations for a plan file. Makes NO changes."""
+        """Show the exact sync operations for a plan FILE. Makes NO changes."""
         settings = _settings(backend or default_backend, home or default_home, None)
         with EngineSession(settings) as eng:
-            plan = eng.load(plan_path)
-            sync_plan = eng.reconciler.build_plan(plan, restore_deleted=restore_deleted)
-            return ok_envelope(**plan_to_dict(sync_plan))
+            return _preview(eng, eng.load(plan_path), restore_deleted=restore_deleted)
+
+    @mcp.tool()
+    @_guard
+    def preview_plan_json(
+        plan: dict[str, Any],
+        backend: str | None = None,
+        home: str | None = None,
+        restore_deleted: bool = False,
+    ) -> dict[str, Any]:
+        """Show the exact sync operations for a plan JSON OBJECT (no file needed).
+
+        `plan` is a complete meal-plan object matching the schema from
+        `plan_schema`. Makes NO changes — ideal for an agent to validate and
+        preview a plan it just generated in-memory.
+        """
+        settings = _settings(backend or default_backend, home or default_home, None)
+        with EngineSession(settings) as eng:
+            return _preview(eng, eng.load_dict(plan), restore_deleted=restore_deleted)
 
     @mcp.tool()
     @_guard
@@ -249,7 +301,7 @@ def build_mcp(
         restore_deleted: bool = False,
         on_conflict: str | None = None,
     ) -> dict[str, Any]:
-        """Write the plan to the diary. Idempotent; preserves manual changes.
+        """Write a plan FILE to the diary. Idempotent; preserves manual changes.
 
         Conflicts (an entry you edited manually) are NEVER overwritten through
         this tool unless on_conflict='overwrite' is passed explicitly — the
@@ -258,31 +310,46 @@ def build_mcp(
         """
         settings = _settings(backend or default_backend, home or default_home, on_conflict)
         with EngineSession(settings) as eng:
-            plan = eng.load(plan_path)
-            sync_plan = eng.reconciler.build_plan(plan, restore_deleted=restore_deleted)
+            return _apply(eng, eng.load(plan_path), restore_deleted=restore_deleted)
 
-            unresolved = sync_plan.unresolved()
-            if unresolved:
-                return {
-                    "ok": False,
-                    "error_code": ErrorCode.UNRESOLVED_FOODS.value,
-                    "error": f"{len(unresolved)} entries unresolved; call resolve_plan first",
-                    "unresolved": [a.source_entry_id for a in unresolved],
-                }
+    @mcp.tool()
+    @_guard
+    def apply_plan_json(
+        plan: dict[str, Any],
+        confirm: bool,
+        backend: str | None = None,
+        home: str | None = None,
+        restore_deleted: bool = False,
+        on_conflict: str | None = None,
+    ) -> dict[str, Any]:
+        """Write a plan JSON OBJECT to the diary (no file needed).
 
-            mutating = [a for a in sync_plan.actions if a.mutates]
-            if not mutating:
-                return ok_envelope(
-                    message="nothing to apply; diary already matches the plan",
-                    result=empty_result_dict(),
+        REQUIRES `confirm=true` — this is the one tool that mutates your real
+        diary from an in-memory object, so the caller must opt in explicitly.
+        With confirm=false (the default an agent should send first) it returns
+        the preview and writes nothing, so an agent can show you the plan before
+        asking you to confirm.
+
+        Idempotent and manual-change-preserving via the same engine as the CLI:
+        refuses while any food is unresolved, and never overwrites a manual edit
+        unless on_conflict='overwrite' is set explicitly.
+        """
+        settings = _settings(backend or default_backend, home or default_home, on_conflict)
+        with EngineSession(settings) as eng:
+            meal_plan = eng.load_dict(plan)
+            if not confirm:
+                # Safety: no write without explicit confirmation. Return the
+                # preview so the agent/user can review before confirming.
+                preview = _preview(eng, meal_plan, restore_deleted=restore_deleted)
+                preview["message"] = (
+                    "confirm=false: nothing written. Review this preview, then call "
+                    "again with confirm=true to apply."
                 )
-
-            # Agent-safe: never overwrite a manual edit unless the caller set
-            # on_conflict='overwrite' (handled inside the writer via settings).
-            result = eng.reconciler.apply(sync_plan, confirm_conflict=lambda a: False)
-            code = ErrorCode.OK.value if result.ok else ErrorCode.WRITE_UNCERTAIN.value
-            return {"ok": result.ok, "error_code": code,
-                    "result": apply_result_to_dict(result)}
+                preview["applied"] = False
+                return preview
+            result = _apply(eng, meal_plan, restore_deleted=restore_deleted)
+            result["applied"] = result.get("ok", False)
+            return result
 
     return mcp
 

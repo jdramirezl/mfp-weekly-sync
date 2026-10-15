@@ -76,7 +76,8 @@ def _backend_with_session(monkeypatch, http: _StubHttp) -> CookieSessionBackend:
     # Skip real cookie extraction.
     monkeypatch.setattr(
         "mfp_sync.backends.cookie_session.extract_mfp_cookies",
-        lambda browser="Chrome": {"_mfp_session": "stub", "__Secure-next-auth.session-token": "s"},
+        lambda browser="Chrome", profile=None: {
+            "_mfp_session": "stub", "__Secure-next-auth.session-token": "s"},
     )
     b._http = http
     return b

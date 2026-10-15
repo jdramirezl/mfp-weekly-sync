@@ -16,7 +16,7 @@ from mfp_sync.errors import SessionExpiredError
 from mfp_sync.models import MealPlan
 from mfp_sync.reconciliation import ActionType, Reconciler
 from mfp_sync.resolver import Resolver
-from mfp_sync.storage import SYNC_STATUS_UNCERTAIN, Storage
+from mfp_sync.storage import SYNC_STATUS_SYNCED, SYNC_STATUS_UNCERTAIN, Storage
 
 MONDAY = dt.date(2026, 10, 19)
 
@@ -234,6 +234,92 @@ def test_uncertain_write_not_retried_and_recovers_without_duplicate():
     rec.apply(sp2)
     # At most one extra entry; assert no runaway duplication.
     assert len(backend.all_entries()) <= 2
+
+
+def test_ambiguous_pending_recovery_with_multiple_identical_entries():
+    """Finding #1: a pending write + 2 identical unclaimed remote entries must
+    NOT be auto-adopted (can't tell ours from a manual duplicate) and must NOT
+    be re-added (would duplicate). It reports UNCERTAIN and writes nothing."""
+    backend, storage, rec = build()
+    plan = make_plan([("mon-oats", "Oatmeal, dry", 40, "g", "breakfast")])
+
+    # Simulate a prior write that never got a confirmed remote id (crash/uncertain).
+    record = storage.new_record(
+        plan_id="test-plan", source_entry_id="mon-oats", date=MONDAY, meal="breakfast",
+        food_id="mock-oatmeal", serving_id=None, servings=40.0,
+        serving_unit="g", serving_value=1.0, status=SYNC_STATUS_UNCERTAIN,
+    )
+    storage.upsert_sync_record(record)
+
+    # Two identical, manually-created-looking entries exist remotely.
+    backend.manual_add(date=MONDAY, meal="breakfast", food_id="mock-oatmeal",
+                       food_description="Oatmeal, dry", servings=40.0,
+                       serving_unit="g", serving_value=1.0)
+    backend.manual_add(date=MONDAY, meal="breakfast", food_id="mock-oatmeal",
+                       food_description="Oatmeal, dry", servings=40.0,
+                       serving_unit="g", serving_value=1.0)
+    before = len(backend.all_entries())
+
+    sp = rec.build_plan(plan)
+    assert len(sp.actions) == 1
+    assert sp.actions[0].action is ActionType.UNCERTAIN
+    result = rec.apply(sp)
+    # Nothing written: no adopt, no re-add.
+    assert result.added == []
+    assert len(backend.all_entries()) == before
+
+
+def test_pending_recovery_adopts_single_unclaimed_match():
+    """Exactly one unclaimed match -> safe to adopt as the landed write."""
+    backend, storage, rec = build()
+    plan = make_plan([("mon-oats", "Oatmeal, dry", 40, "g", "breakfast")])
+    record = storage.new_record(
+        plan_id="test-plan", source_entry_id="mon-oats", date=MONDAY, meal="breakfast",
+        food_id="mock-oatmeal", serving_id=None, servings=40.0,
+        serving_unit="g", serving_value=1.0, status=SYNC_STATUS_UNCERTAIN,
+    )
+    storage.upsert_sync_record(record)
+    landed = backend.manual_add(date=MONDAY, meal="breakfast", food_id="mock-oatmeal",
+                                food_description="Oatmeal, dry", servings=40.0,
+                                serving_unit="g", serving_value=1.0)
+
+    sp = rec.build_plan(plan)
+    assert sp.actions[0].action is ActionType.SKIP
+    assert sp.actions[0].existing_remote_id == landed.remote_id
+    rec.apply(sp)
+    assert len(backend.all_entries()) == 1  # adopted, not duplicated
+
+
+def test_pending_recovery_does_not_adopt_already_claimed_entry():
+    """A remote entry owned by ANOTHER sync record is not evidence this pending
+    write landed; recovery must re-add rather than steal the claimed entry."""
+    backend, storage, rec = build()
+    plan = make_plan([("mon-oats", "Oatmeal, dry", 40, "g", "breakfast")])
+
+    # An existing managed entry (different source id) already owns the one
+    # matching remote entry.
+    owned = backend.manual_add(date=MONDAY, meal="breakfast", food_id="mock-oatmeal",
+                               food_description="Oatmeal, dry", servings=40.0,
+                               serving_unit="g", serving_value=1.0)
+    other = storage.new_record(
+        plan_id="test-plan", source_entry_id="other-entry", date=MONDAY, meal="breakfast",
+        food_id="mock-oatmeal", serving_id=None, servings=40.0,
+        serving_unit="g", serving_value=1.0, status=SYNC_STATUS_SYNCED,
+    )
+    storage.touch(other, remote_entry_id=owned.remote_id, status=SYNC_STATUS_SYNCED)
+    storage.upsert_sync_record(other)
+
+    # Now our pending record for mon-oats, with no confirmed remote id.
+    rec_row = storage.new_record(
+        plan_id="test-plan", source_entry_id="mon-oats", date=MONDAY, meal="breakfast",
+        food_id="mock-oatmeal", serving_id=None, servings=40.0,
+        serving_unit="g", serving_value=1.0, status=SYNC_STATUS_UNCERTAIN,
+    )
+    storage.upsert_sync_record(rec_row)
+
+    sp = rec.build_plan(plan)
+    # The only match is claimed -> treated as zero unclaimed matches -> ADD.
+    assert sp.actions[0].action is ActionType.ADD
 
 
 def test_expired_session_surfaces_cleanly():

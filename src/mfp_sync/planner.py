@@ -34,6 +34,17 @@ def load_plan(path: str | Path) -> MealPlan:
     if isinstance(data, dict) and not data.get("plan_id"):
         data["plan_id"] = p.stem
 
+    return load_plan_dict(data)
+
+
+def load_plan_dict(data: Any) -> MealPlan:
+    """Validate a plan already parsed into a dict (same rules as load_plan).
+
+    Used by the file loader above and by the MCP *_json tools, which receive a
+    complete plan object directly rather than a file path.
+    """
+    if not isinstance(data, dict):
+        raise InvalidPlanError("plan must be a JSON object")
     try:
         return MealPlan.model_validate(data)
     except ValidationError as exc:

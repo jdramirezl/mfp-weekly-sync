@@ -50,8 +50,9 @@ def test_all_tools_registered(mcp):
     async def names():
         return {t.name for t in await mcp.list_tools()}
     got = asyncio.run(names())
-    assert got == {"plan_schema", "doctor", "preview_plan", "status_plan",
-                   "resolve_plan", "export_diary", "apply_plan"}
+    assert got == {"plan_schema", "doctor", "preview_plan", "preview_plan_json",
+                   "status_plan", "resolve_plan", "export_diary",
+                   "apply_plan", "apply_plan_json"}
 
 
 def test_plan_schema_tool(mcp):
@@ -115,6 +116,49 @@ def test_resolve_reports_candidates(mcp, tmp_path):
     assert len(r["unresolved"][0]["candidates"]) >= 2
 
 
+# -- JSON-object tools (findings #4 and #5) ----------------------------------
+
+
+def test_preview_plan_json_accepts_object(mcp):
+    r = _call(mcp, "preview_plan_json", {"plan": PLAN})
+    assert r["ok"] is True
+    assert r["counts"].get("add") == 2
+
+
+def test_preview_plan_json_rejects_invalid_object(mcp):
+    r = _call(mcp, "preview_plan_json", {"plan": {"schema_version": 1, "days": [
+        {"date": "not-a-date", "meals": {}}]}})
+    assert r["ok"] is False
+    assert r["error_code"] == "INVALID_PLAN"
+
+
+def test_apply_plan_json_requires_confirmation(mcp):
+    # confirm=False -> preview only, nothing written.
+    r = _call(mcp, "apply_plan_json", {"plan": PLAN, "confirm": False})
+    assert r["applied"] is False
+    assert "counts" in r  # it returned a preview
+    # Verify truly nothing was written: a subsequent confirm=True adds all.
+    r2 = _call(mcp, "apply_plan_json", {"plan": PLAN, "confirm": True})
+    assert r2["applied"] is True
+    assert len(r2["result"]["added"]) == 2
+
+
+def test_apply_plan_json_is_idempotent(mcp):
+    r1 = _call(mcp, "apply_plan_json", {"plan": PLAN, "confirm": True})
+    assert len(r1["result"]["added"]) == 2
+    r2 = _call(mcp, "apply_plan_json", {"plan": PLAN, "confirm": True})
+    assert r2["result"]["added"] == []
+
+
+def test_apply_plan_json_blocks_on_unresolved(mcp):
+    amb = {"schema_version": 1, "plan_id": "amb",
+           "days": [{"date": "2026-10-19", "meals": {"lunch": [
+               {"entry_id": "x", "food": "chicken breast", "quantity": 100, "unit": "g"}]}}]}
+    r = _call(mcp, "apply_plan_json", {"plan": amb, "confirm": True})
+    assert r["ok"] is False
+    assert r["error_code"] == "UNRESOLVED_FOODS"
+
+
 # -- security gates -----------------------------------------------------------
 
 
@@ -148,3 +192,52 @@ def test_token_middleware_rejects_without_bearer(tmp_path):
     r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"},
                     headers={"Authorization": "Bearer nope"})
     assert r.status_code == 401
+
+
+def test_token_gate_real_http_requests(tmp_path):
+    """Finding #7: verify the gate over a REAL HTTP server (not just TestClient).
+
+    Spins up uvicorn in a thread so the MCP session manager lifespan runs, then
+    sends real requests: missing token -> 401, wrong token -> 401, correct
+    token -> 200 with a JSON-RPC result (gate passed AND handler executed)."""
+    import threading
+    import time
+
+    httpx = pytest.importorskip("httpx")
+    uvicorn = pytest.importorskip("uvicorn")
+    from mfp_sync.mcp_server import _add_token_gate
+
+    token = "real-http-token-abc"
+    m = build_mcp(default_backend="mock", default_home=str(tmp_path / "s"))
+    _add_token_gate(m, token)
+    app = m.streamable_http_app()
+
+    config = uvicorn.Config(app, host="127.0.0.1", port=8773, log_level="error")
+    server = uvicorn.Server(config)
+    thread = threading.Thread(target=server.run, daemon=True)
+    thread.start()
+    try:
+        for _ in range(100):
+            if server.started:
+                break
+            time.sleep(0.05)
+        assert server.started, "uvicorn did not start"
+
+        base = "http://127.0.0.1:8773/mcp"
+        hdr = {"Accept": "application/json, text/event-stream",
+               "Content-Type": "application/json"}
+        init = {"jsonrpc": "2.0", "id": 1, "method": "initialize",
+                "params": {"protocolVersion": "2024-11-05", "capabilities": {},
+                           "clientInfo": {"name": "t", "version": "1"}}}
+        with httpx.Client(timeout=10) as c:
+            assert c.post(base, json=init, headers=hdr).status_code == 401
+            assert c.post(base, json=init,
+                          headers={**hdr, "Authorization": "Bearer WRONG"}).status_code == 401
+            ok = c.post(base, json=init,
+                        headers={**hdr, "Authorization": f"Bearer {token}"})
+            assert ok.status_code == 200
+            assert "jsonrpc" in ok.text
+    finally:
+        server.should_exit = True
+        thread.join(timeout=5)
+

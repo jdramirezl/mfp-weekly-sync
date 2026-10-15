@@ -46,9 +46,11 @@ class CookieSessionBackend:
     name = "cookie-session"
     supports_stable_ids = True
 
-    def __init__(self, settings: Settings, browser: str = "Chrome"):
+    def __init__(self, settings: Settings, browser: str = "Chrome",
+                 profile: str | None = None):
         self._settings = settings
         self._browser = browser
+        self._profile = profile
         self._http: Any = None
         self._access_token: str | None = None
         self._user_id: str | None = None
@@ -71,7 +73,7 @@ class CookieSessionBackend:
             ) from exc
 
         try:
-            cookies = extract_mfp_cookies(self._browser)
+            cookies = extract_mfp_cookies(self._browser, self._profile)
         except CookieExtractionError as exc:
             raise AuthRequiredError(str(exc)) from exc
 

@@ -27,22 +27,31 @@ import os
 import sqlite3
 import subprocess
 import tempfile
+import time
 from pathlib import Path
 
 DOMAIN = "myfitnesspal.com"
 
-# Cookies DB locations relative to ~/Library/Application Support/.
-# Newer Chromium moved the DB into a "Network/" subdir; try that first.
-_CHROMIUM_COOKIES_PATHS_MACOS: dict[str, list[str]] = {
-    "Arc": ["Arc/User Data/Default/Network/Cookies", "Arc/User Data/Default/Cookies"],
-    "Chrome": ["Google/Chrome/Default/Network/Cookies", "Google/Chrome/Default/Cookies"],
-    "Chromium": ["Chromium/Default/Network/Cookies", "Chromium/Default/Cookies"],
-    "Microsoft Edge": ["Microsoft Edge/Default/Network/Cookies",
-                       "Microsoft Edge/Default/Cookies"],
-    "Brave": ["BraveSoftware/Brave-Browser/Default/Network/Cookies",
-              "BraveSoftware/Brave-Browser/Default/Cookies"],
-    "Vivaldi": ["Vivaldi/Default/Network/Cookies", "Vivaldi/Default/Cookies"],
-    "Opera": ["com.operasoftware.Opera/Network/Cookies", "com.operasoftware.Opera/Cookies"],
+# Chromium stores expires_utc as microseconds since 1601-01-01 (Windows epoch).
+# Convert the current time into that epoch to compare.
+_CHROMIUM_EPOCH_OFFSET_US = 11_644_473_600_000_000  # microseconds 1601->1970
+
+
+def _now_chromium_us() -> int:
+    return int(time.time() * 1_000_000) + _CHROMIUM_EPOCH_OFFSET_US
+
+
+# Cookie DB paths are relative to ~/Library/Application Support/<browser-root>/.
+# {profile} is substituted with the chosen profile directory ("Default",
+# "Profile 1", ...). Newer Chromium moved the DB into a "Network/" subdir.
+_CHROMIUM_BROWSER_ROOTS_MACOS: dict[str, str] = {
+    "Arc": "Arc/User Data",
+    "Chrome": "Google/Chrome",
+    "Chromium": "Chromium",
+    "Microsoft Edge": "Microsoft Edge",
+    "Brave": "BraveSoftware/Brave-Browser",
+    "Vivaldi": "Vivaldi",
+    "Opera": "com.operasoftware.Opera",
 }
 
 # Markers that indicate an actually-authenticated MFP session (not pre-auth).
@@ -135,7 +144,12 @@ def _snapshot_db(src: Path, dst: str) -> None:
         src_con.close()
 
 
-def _extract_from_db(cookies_db_path: Path, aes_key: bytes) -> dict[str, str]:
+def _extract_from_db(cookies_db_path: Path, aes_key: bytes) -> tuple[dict[str, str], int]:
+    """Return (live cookies, count of session cookies dropped as expired).
+
+    Expired cookies are filtered out: a stale session-token read back would only
+    fail later at the API with a confusing 401. We surface expiry explicitly.
+    """
     fd, tmp_path = tempfile.mkstemp(suffix=".cookies.db")
     os.close(fd)
     try:
@@ -143,8 +157,8 @@ def _extract_from_db(cookies_db_path: Path, aes_key: bytes) -> dict[str, str]:
         con = sqlite3.connect(tmp_path)
         try:
             rows = con.execute(
-                "SELECT name, value, encrypted_value, host_key FROM cookies "
-                "WHERE host_key = ? OR host_key LIKE ?",
+                "SELECT name, value, encrypted_value, host_key, expires_utc "
+                "FROM cookies WHERE host_key = ? OR host_key LIKE ?",
                 (DOMAIN, f"%.{DOMAIN}"),
             ).fetchall()
         finally:
@@ -154,53 +168,121 @@ def _extract_from_db(cookies_db_path: Path, aes_key: bytes) -> dict[str, str]:
             os.unlink(tmp_path)
         except OSError:
             pass
+
+    now_us = _now_chromium_us()
     cookies: dict[str, str] = {}
-    for name, plain, enc, host_key in rows:
+    expired_session_cookies = 0
+    for name, plain, enc, host_key, expires_utc in rows:
+        # expires_utc == 0 means a session cookie (no persistent expiry) — keep.
+        # A positive expiry in the past means the cookie is dead; drop it.
+        is_expired = bool(expires_utc) and expires_utc <= now_us
         value = plain if plain else _decrypt_value(enc, aes_key, host_key)
         if value is None or "\ufffd" in value:
             continue
+        if is_expired:
+            if "session-token" in name or name == "_mfp_session":
+                expired_session_cookies += 1
+            continue
         cookies[name] = value
-    return cookies
+    return cookies, expired_session_cookies
 
 
-def _resolve_db_path(browser: str) -> Path | None:
+def _resolve_db_path(browser: str, profile: str) -> Path | None:
+    """Locate the cookie DB for a browser + profile, trying Network/ then legacy."""
+    root = _CHROMIUM_BROWSER_ROOTS_MACOS.get(browser)
+    if root is None:
+        return None
     appsup = Path.home() / "Library" / "Application Support"
-    for rel in _CHROMIUM_COOKIES_PATHS_MACOS.get(browser, []):
+    for rel in (f"{root}/{profile}/Network/Cookies", f"{root}/{profile}/Cookies"):
         candidate = appsup / rel
         if candidate.exists():
             return candidate
     return None
 
 
-def extract_mfp_cookies(browser: str = "Chrome") -> dict[str, str]:
-    """Extract MyFitnessPal cookies from `browser` (default Chrome) on macOS.
+def _list_profiles(browser: str) -> list[str]:
+    """Profile directories that actually have a cookie DB, 'Default' first."""
+    root = _CHROMIUM_BROWSER_ROOTS_MACOS.get(browser)
+    if root is None:
+        return []
+    base = Path.home() / "Library" / "Application Support" / root
+    if not base.is_dir():
+        return []
+    found: list[str] = []
+    for child in sorted(base.iterdir()):
+        if not child.is_dir():
+            continue
+        if (child / "Network" / "Cookies").exists() or (child / "Cookies").exists():
+            found.append(child.name)
+    # Prefer Default first, then the rest in sorted order.
+    found.sort(key=lambda n: (n != "Default", n))
+    return found
 
-    Raises CookieExtractionError with an actionable message on any failure.
+
+def extract_mfp_cookies(browser: str = "Chrome", profile: str | None = None) -> dict[str, str]:
+    """Extract a live MyFitnessPal session from `browser` (default Chrome) on macOS.
+
+    If `profile` is given (e.g. "Default", "Profile 1"), only that profile is
+    tried. Otherwise every profile that has a cookie DB is searched, Default
+    first, and the first one holding an authenticated, non-expired MFP session
+    wins. Raises CookieExtractionError with an actionable message on failure.
     """
-    db_path = _resolve_db_path(browser)
-    if db_path is None:
+    if browser not in _CHROMIUM_BROWSER_ROOTS_MACOS:
         raise CookieExtractionError(
-            f"no {browser} cookie database found. Is {browser} installed and have "
-            f"you logged into myfitnesspal.com in it?"
+            f"unsupported browser {browser!r}. Supported: "
+            f"{', '.join(sorted(_CHROMIUM_BROWSER_ROOTS_MACOS))}"
         )
+
+    profiles = [profile] if profile else _list_profiles(browser)
+    if not profiles:
+        raise CookieExtractionError(
+            f"no {browser} profile with a cookie database found. Is {browser} "
+            "installed and have you logged into myfitnesspal.com in it?"
+        )
+
+    # The Keychain password is per-browser (not per-profile); read it once. This
+    # is what triggers the one-time macOS Keychain authorization dialog.
     service = f"{browser} Safe Storage"
     password = _keychain_password(service)
     if password is None:
         raise CookieExtractionError(
             f"could not read '{service}' from the macOS Keychain. When the "
-            "permission dialog appears, click 'Always Allow'. (If it was denied, "
-            "open Keychain Access, find the entry, and grep its access control.)"
+            "permission dialog appears, click 'Always Allow'. If you previously "
+            "denied it, open Keychain Access, find the entry, and grant access."
         )
     aes_key = _derive_aes_key(password)
-    cookies = _extract_from_db(db_path, aes_key)
-    if not cookies:
+
+    saw_cookies_but_undecryptable = False
+    saw_expired_session = False
+    tried: list[str] = []
+    for prof in profiles:
+        db_path = _resolve_db_path(browser, prof)
+        if db_path is None:
+            continue
+        tried.append(prof)
+        cookies, expired_session = _extract_from_db(db_path, aes_key)
+        if expired_session and not cookies:
+            saw_expired_session = True
+        if cookies and not has_mfp_session(cookies):
+            saw_cookies_but_undecryptable = True
+        if has_mfp_session(cookies):
+            return cookies
+
+    # Nothing usable — give the most specific reason we can.
+    where = f"{browser} ({', '.join(tried)})" if tried else browser
+    if saw_expired_session:
         raise CookieExtractionError(
-            f"no decryptable myfitnesspal.com cookies found in {browser}. They may "
-            "be v20 app-bound encrypted (newest Chrome), or you are not logged in."
+            f"your {where} MyFitnessPal session cookie has expired. Open "
+            "myfitnesspal.com in the browser, log in again, then retry."
         )
-    if not has_mfp_session(cookies):
+    if saw_cookies_but_undecryptable:
         raise CookieExtractionError(
-            f"found {browser} cookies for myfitnesspal.com but none look like an "
-            "authenticated session (no session-token / _mfp_session). Log in again."
+            f"found myfitnesspal.com cookies in {where} but none look like an "
+            "authenticated session (no session-token / _mfp_session), or they are "
+            "v20 app-bound encrypted (newest Chrome) and can't be decrypted here. "
+            "Log in again, or use a browser whose cookies are v10/v11."
         )
-    return cookies
+    raise CookieExtractionError(
+        f"no decryptable myfitnesspal.com session cookies found in {where}. "
+        "Log into myfitnesspal.com in the browser and retry."
+    )
