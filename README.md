@@ -146,12 +146,20 @@ security model: [docs/mcp.md](docs/mcp.md).
 
 ## 3. Generating a weekly plan
 
-A plan is a JSON file (CSV also supported). Get the schema and an agent prompt:
+A plan is a JSON file (CSV also supported). The easiest way is to have ChatGPT
+write it:
 
 ```bash
-mfp-sync schema                                    # prints the JSON Schema
-cat docs/agent-integration.md                      # includes a ready-to-use prompt
+mfp-sync schema                      # prints the JSON Schema
+open docs/chatgpt-prompt.md          # copy this into ChatGPT, edit the request block
 ```
+
+[`docs/chatgpt-prompt.md`](docs/chatgpt-prompt.md) is a ready-to-paste prompt
+**tuned so the generated plan resolves cleanly** against MyFitnessPal's food
+database — it tells the model to use short generic food names, grams for solids,
+required calorie estimates (used to catch wrong matches), and to split composite
+dishes into component foods. Paste it, edit the "My plan request" block, save
+the reply as `plan.json`, then `preview` and `apply`.
 
 A sample 3-day plan with multiple meals ships at
 [`examples/weekly_plan.json`](examples/weekly_plan.json). Minimal shape:

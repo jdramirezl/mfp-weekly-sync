@@ -1,34 +1,83 @@
-# ChatGPT prompt: generate a MyFitnessPal weekly meal plan
+# ChatGPT prompt: generate a MyFitnessPal meal plan for mfp-weekly-sync
 
-Copy everything below the line into ChatGPT. Replace the goals/preferences in
-step 1 with your own. Save ChatGPT's JSON output as `plan.json`.
+This prompt is tuned so the JSON you get back **resolves cleanly** against
+MyFitnessPal's food database. Copy everything below the line into ChatGPT, edit
+the "My plan request" block, and save the reply as `plan.json`. Then:
+
+```bash
+mfp-sync --backend cookie-session preview plan.json   # check it
+mfp-sync --backend cookie-session apply   plan.json   # write it
+```
 
 ----------------------------------------------------------------------
 
-You are a meal-planning assistant. Produce a 7-day meal plan as a single JSON
-document that conforms EXACTLY to the JSON Schema at the end of this message.
+You generate meal plans as a single JSON document for a tool called
+`mfp-weekly-sync`, which logs them into MyFitnessPal. The tool matches each
+food you name against MyFitnessPal's database, so HOW you name and quantify
+foods decides whether it matches correctly. Follow every rule below.
 
-My preferences (edit these):
-- Goal: ~2000 kcal/day, ~150 g protein
-- Diet: no restrictions
-- Week starting: 2026-10-19 (Monday)
-- Meals: breakfast, lunch, dinner, and 1-2 snacks per day
+## My plan request (EDIT THIS BLOCK)
+- Dates: 2026-10-19 to 2026-10-23 (one object per day)
+- Meals to fill: breakfast, lunch, dinner, snack  (leave others as empty lists)
+- Daily target: ~2000 kcal, ~150 g protein
+- Diet / preferences: (none / write yours here)
+- Notes: (e.g. "Colombian breakfasts", "meal-prep the same lunch Mon-Tue")
 
-Rules you MUST follow:
-- Output ONLY the JSON. No prose, no markdown fences.
-- "schema_version" is 1.
-- One object per day in "days"; "date" is ISO "YYYY-MM-DD".
-- "meals" keys are exactly: breakfast, lunch, dinner, snack (lowercase).
-- Every food item needs a UNIQUE "entry_id" (kebab-case, e.g. "mon-breakfast-oats"),
-  a plain-English "food" name, a numeric "quantity" > 0, and a "unit".
-- Prefer "g" for solids; use a natural serving unit (e.g. "medium", "cup", "slice")
-  only when that's how the food is normally measured.
-- Include "expected_calories" for each item (your best estimate) so the tool can
-  flag mismatches. Add "expected_macros" {protein_g, carbs_g, fat_g} if you can.
-- DO NOT invent MyFitnessPal food IDs. Leave "mfp_food_id" out entirely.
+## Output rules (MANDATORY)
+1. Output ONLY the JSON object. No prose, no explanations, no ```json fences.
+2. `schema_version` is 1. Set `timezone` to "America/Mexico_City".
+3. One object per day in `days`; `date` is ISO "YYYY-MM-DD", a real calendar date.
+4. `meals` keys are exactly: `breakfast`, `lunch`, `dinner`, `snack` (lowercase).
+   Include all four every day; use an empty list `[]` for meals with no food.
+5. Every food item has: a UNIQUE `entry_id` (kebab-case, e.g.
+   "2026-10-19-breakfast-oats"), a `food` name, a numeric `quantity` > 0, a
+   `unit`, and `expected_calories` (REQUIRED — see rule 9).
 
-JSON Schema (your output must validate against this):
+## How to NAME foods so they match (this is the important part)
+6. Use SHORT, GENERIC, SINGULAR names in the USDA/common style — NOT long
+   descriptions. The matcher rejects a candidate when your name is too elaborate.
+   - GOOD: "Boiled potatoes", "Chicken breast, cooked", "White rice, cooked",
+     "Rotini pasta, cooked", "Cheddar cheese, shredded", "White onion, raw",
+     "Banana, raw", "Olive oil", "Tomato sauce".
+   - BAD: "Arepa made with Harina PAN and water, prepared (120 g hydrated)",
+     "Onion, cilantro and mixed vegetables", "Clight prepared sugar-free drink".
+   - State the cooked/raw state when it changes calories ("cooked" vs "raw"),
+     because they are different database foods.
+7. SPLIT composite dishes into their component single foods, each its own item.
+   A taco = tortilla + meat + cheese + onion + lime, as separate entries. Do not
+   write "tacos al pastor" as one line.
+8. Pick a UNIT the food is normally measured in:
+   - Solids: `g` (grams). This is the most reliable unit — prefer it.
+   - Liquids/drinks: `ml`.
+   - Whole items counted individually: `piece` (eggs, tortillas, slices of bread,
+     whole fruit). Say "large"/"medium" in the name if size matters, e.g.
+     "Egg, whole, large".
+   - Avoid cups/tbsp/"scoop"/"serving" unless that is genuinely the only natural
+     measure — gram amounts resolve far more reliably.
+9. `expected_calories` is REQUIRED on every item and must be your best honest
+   estimate for THAT quantity (not per 100 g). The tool compares it to the
+   matched food and WARNS on a big mismatch — this is how wrong matches get
+   caught, so make the estimate realistic. Also include `expected_macros`
+   `{ "protein_g": N, "carbs_g": N, "fat_g": N }` for that quantity.
+10. If you know a MyFitnessPal food id for an item, you MAY add `mfp_food_id`
+    (and `serving_id`) to force an exact match. If you are not certain, OMIT
+    them — never guess an id.
+11. Optional `brand` only when the product is genuinely branded and you mean
+    that specific product.
 
+## Sanity checks before you answer
+- Each day's summed `expected_calories` is near my daily target.
+- Every `entry_id` is unique across the WHOLE plan.
+- Every item has `food`, `quantity`, `unit`, and `expected_calories`.
+- Food names are short and generic (re-read rule 6).
+
+Produce the plan now. Output only the JSON.
+
+----------------------------------------------------------------------
+
+## JSON Schema (your output MUST validate against this)
+
+```json
 {
   "$defs": {
     "DayPlan": {
@@ -287,3 +336,4 @@ JSON Schema (your output must validate against this):
   "type": "object",
   "$schema": "https://json-schema.org/draft/2020-12/schema"
 }
+```
