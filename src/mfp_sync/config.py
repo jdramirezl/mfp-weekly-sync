@@ -57,6 +57,10 @@ class Settings:
     mfp_username: str | None = None
     mfp_password: str | None = None
 
+    # cookie-session backend: which browser / profile to read the session from.
+    cookie_browser: str = "Chrome"
+    cookie_profile: str | None = None
+
     def validate(self) -> None:
         if self.backend not in VALID_BACKENDS:
             raise ConfigError(
@@ -142,6 +146,8 @@ def load_settings(config_path: Path | None = None) -> Settings:
         ),
         mfp_username=os.environ.get("MFP_USERNAME"),
         mfp_password=os.environ.get("MFP_PASSWORD"),
+        cookie_browser=os.environ.get("MFP_COOKIE_BROWSER", data.get("cookie_browser", "Chrome")),
+        cookie_profile=os.environ.get("MFP_COOKIE_PROFILE", data.get("cookie_profile")),
     )
     settings.validate()
     return settings

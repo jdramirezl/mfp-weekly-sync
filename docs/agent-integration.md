@@ -37,17 +37,25 @@ deterministically.
   "ok": true,
   "error_code": "OK",
   "plan_id": "weekly_plan_2026-10-19",
-  "counts": {"add": 11},
+  "counts": { "add": 11 },
   "actions": [
     {
-      "date": "2026-10-19", "meal": "breakfast", "entry_id": "mon-breakfast-oats",
-      "food": "Oatmeal, dry", "action": "add",
-      "matched_food": "Oatmeal, dry", "matched_food_id": "mock-oatmeal",
-      "servings": 40.0, "serving_unit": "g", "nutrition_warnings": []
+      "date": "2026-10-19",
+      "meal": "breakfast",
+      "entry_id": "mon-breakfast-oats",
+      "food": "Oatmeal, dry",
+      "action": "add",
+      "matched_food": "Oatmeal, dry",
+      "matched_food_id": "mock-oatmeal",
+      "servings": 40.0,
+      "serving_unit": "g",
+      "nutrition_warnings": []
     }
   ],
   "daily_nutrition": {
-    "2026-10-19": {"calories": {"planned": 662, "actual": 661.9, "ok": true}}
+    "2026-10-19": {
+      "calories": { "planned": 662, "actual": 661.9, "ok": true }
+    }
   }
 }
 ```
@@ -60,8 +68,11 @@ deterministically.
   "error_code": "OK",
   "result": {
     "added": ["2026-10-19/breakfast/mon-breakfast-oats"],
-    "skipped": [], "restored": [], "overwritten": [],
-    "failed": [], "uncertain": []
+    "skipped": [],
+    "restored": [],
+    "overwritten": [],
+    "failed": [],
+    "uncertain": []
   }
 }
 ```
@@ -74,10 +85,16 @@ deterministically.
   "error_code": "UNRESOLVED_FOODS",
   "unresolved": [
     {
-      "entry_id": "x", "food": "chicken breast", "status": "ambiguous",
+      "entry_id": "x",
+      "food": "chicken breast",
+      "status": "ambiguous",
       "message": "best match ... below auto-accept ...",
       "candidates": [
-        {"food_id": "mock-chicken-cooked", "description": "Chicken breast, cooked", "brand": null}
+        {
+          "food_id": "mock-chicken-cooked",
+          "description": "Chicken breast, cooked",
+          "brand": null
+        }
       ]
     }
   ]
@@ -92,6 +109,7 @@ Use a prompt like this to turn a natural-language plan into a valid file:
 > the schema at `src/mfp_sync/schema/weekly_plan.schema.json`.
 >
 > Rules:
+>
 > - `schema_version` is 1.
 > - One object per day in `days`, each with an ISO `date` (`YYYY-MM-DD`) and a
 >   `meals` object with keys `breakfast`, `lunch`, `dinner`, `snack`.
@@ -100,7 +118,7 @@ Use a prompt like this to turn a natural-language plan into a valid file:
 >   a `unit`. Prefer `g` for solids and a named serving (e.g. `medium`, `cup`)
 >   only when that's how the food is naturally measured.
 > - Include `expected_calories` (and `expected_macros` if known) so the tool can
->   flag mismatches. These are *planned* estimates, not authoritative values.
+>   flag mismatches. These are _planned_ estimates, not authoritative values.
 > - Do not invent MyFitnessPal food IDs. Leave `mfp_food_id` out unless the user
 >   gave you a verified one.
 >

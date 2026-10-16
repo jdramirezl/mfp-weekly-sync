@@ -40,18 +40,23 @@ ChatGPT  →  meal_plan.json  →  mfp-sync preview  →  mfp-sync apply  →  M
 | Backend | For | Auth | Install extra |
 |---|---|---|---|
 | `mock` (default) | offline use, tests | none | — |
-| `cookie-session` | **Google/Apple SSO logins** (no password) | your existing Chrome session (macOS) | `.[cookie]` |
+| `cookie-session` | **Google/Apple SSO logins** (no password) | your existing browser session (macOS/Windows: Chromium or Firefox) | `.[cookie]` |
 | `myfitnesspal` | username/password logins | native mobile OAuth | `mfp-api` (git) |
 
 Select with `--backend <name>` on any command, or `MFP_SYNC_BACKEND=<name>`.
 If you sign in to MyFitnessPal with "Continue with Google", use `cookie-session`
-— there is no password for the `myfitnesspal` backend to use.
+— there is no password for the `myfitnesspal` backend to use. Choose which
+browser holds your session with `MFP_COOKIE_BROWSER` (`chrome`, `edge`, `brave`,
+`firefox`, …) and optionally `MFP_COOKIE_PROFILE`. On Windows, Firefox is the
+most reliable (Chrome/Edge's newest "app-bound" cookies can't be read outside
+the browser; the tool detects this and tells you to switch).
 
 ## Requirements
 
 - **Python 3.10–3.12.** (Not 3.13+: a transitive dependency lacks wheels there.)
-- macOS, Linux, or Windows for `mock`. The `cookie-session` backend's Chrome
-  cookie extraction is **macOS-only**.
+- macOS, Linux, or Windows for `mock`. The `cookie-session` backend works on
+  **macOS** (Chromium via Keychain, or Firefox) and **Windows** (Chromium via
+  DPAPI, or Firefox); Firefox also works on Linux.
 - `cookie-session` needs the `.[cookie]` extra (`cryptography` + `httpx`);
   `myfitnesspal` needs the `mfp-api` package (git install, below).
 
@@ -138,10 +143,17 @@ The `*_json` variants take a complete plan **object** (no file needed), and
 returns a preview. Re-running is idempotent and manual diary changes are
 preserved.
 
-For ChatGPT web, run a token-gated HTTP transport behind a tunnel — the HTTP
-transport refuses to start without `MFP_MCP_TOKEN` and rejects any request that
-doesn't present the bearer token. Full setup for every client, including the
-security model: [docs/mcp.md](docs/mcp.md).
+For ChatGPT web, run a token-gated HTTP transport behind a tunnel. When run over
+HTTP the server enters **exposed mode**: it refuses to start without
+`MFP_MCP_TOKEN`, rejects any request missing the bearer token, rate-limits
+requests, and hides the file-path tools (only the inline-JSON + read-only tools
+are reachable). Full setup for every client, including the security model:
+[docs/mcp.md](docs/mcp.md).
+
+**On Windows**, a step-by-step runbook for serving this to ChatGPT over a tunnel
+(or the ChatGPT desktop app with no tunnel) is in
+[docs/windows-agent-runbook.md](docs/windows-agent-runbook.md) — written so an
+agent on the Windows machine can execute it directly.
 
 
 ## 3. Generating a weekly plan
@@ -314,7 +326,8 @@ mfp-weekly-sync/
     ├── troubleshooting.md
     ├── agent-integration.md
     ├── chatgpt-prompt.md
-    └── mcp.md
+    ├── mcp.md
+    └── windows-agent-runbook.md
 ```
 
 ## License

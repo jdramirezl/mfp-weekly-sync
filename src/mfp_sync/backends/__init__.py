@@ -42,5 +42,7 @@ def build_backend(settings: Settings) -> DiaryBackend:
                 "the 'cookie-session' backend requires cryptography + httpx:\n"
                 '  pip install -e ".[cookie]"'
             ) from exc
-        return CookieSessionBackend(settings)
+        return CookieSessionBackend(
+            settings, browser=settings.cookie_browser, profile=settings.cookie_profile
+        )
     raise BackendUnavailableError(f"unknown backend {settings.backend!r}")

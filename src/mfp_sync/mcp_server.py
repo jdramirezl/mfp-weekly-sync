@@ -126,22 +126,39 @@ def build_mcp(
     default_home: str | None = None,
     host: str = "127.0.0.1",
     port: int = 8000,
+    expose_mode: bool = False,
 ):
-    """Construct the FastMCP app with all tools registered."""
+    """Construct the FastMCP app with tools registered.
+
+    When `expose_mode` is True (used behind a public tunnel), the FILE-PATH
+    tools (`preview_plan`, `status_plan`, `resolve_plan`, `apply_plan`) are NOT
+    registered. They take a server-side filesystem path, which a remote caller
+    (e.g. ChatGPT over a tunnel) cannot use anyway and which a leaked URL could
+    abuse to read arbitrary files. Only the inline-JSON and read-only tools are
+    exposed: `plan_schema`, `doctor`, `preview_plan_json`, `apply_plan_json`,
+    `export_diary`.
+    """
     from mcp.server.fastmcp import FastMCP
 
     mcp = FastMCP(
         SERVER_NAME,
         instructions=(
             "Prepopulate a MyFitnessPal food diary from a weekly meal plan. "
-            "Call `plan_schema` to learn the plan JSON shape, `preview_plan` to "
-            "see the exact operations (no writes), `resolve_plan` to surface "
-            "ambiguous foods, then `apply_plan` to write. Re-running the same "
+            "Call `plan_schema` to learn the plan JSON shape, `preview_plan_json` "
+            "to see the exact operations for a plan object (no writes), then "
+            "`apply_plan_json` with confirm=true to write. Re-running the same "
             "plan is idempotent — it never duplicates entries."
         ),
         host=host,
         port=port,
     )
+
+    # File-path tools are registered only when NOT exposed. Use this decorator
+    # on them so they vanish from the tool list in expose_mode.
+    def file_tool():
+        if expose_mode:
+            return lambda fn: fn  # not registered as an MCP tool
+        return mcp.tool()
 
     # -- read-only / informational tools ------------------------------------
 
@@ -168,7 +185,7 @@ def build_mcp(
                 detail=health.detail,
             )
 
-    @mcp.tool()
+    @file_tool()
     @_guard
     def preview_plan(
         plan_path: str,
@@ -199,7 +216,7 @@ def build_mcp(
         with EngineSession(settings) as eng:
             return _preview(eng, eng.load_dict(plan), restore_deleted=restore_deleted)
 
-    @mcp.tool()
+    @file_tool()
     @_guard
     def status_plan(
         plan_path: str, backend: str | None = None, home: str | None = None
@@ -223,7 +240,7 @@ def build_mcp(
                 })
             return ok_envelope(plan_id=sync_plan.plan_id, entries=rows)
 
-    @mcp.tool()
+    @file_tool()
     @_guard
     def resolve_plan(
         plan_path: str, backend: str | None = None, home: str | None = None
@@ -292,7 +309,7 @@ def build_mcp(
 
     # -- the one mutating tool ----------------------------------------------
 
-    @mcp.tool()
+    @file_tool()
     @_guard
     def apply_plan(
         plan_path: str,
@@ -357,19 +374,23 @@ def build_mcp(
 # -- token gate for HTTP transports ------------------------------------------
 
 
-def _add_token_gate(mcp, token: str) -> None:
-    """Install fail-closed bearer-token middleware on the Starlette app.
+def _add_token_gate(mcp, token: str, rate_limit_per_min: int = 60) -> None:
+    """Install fail-closed bearer-token + rate-limit middleware on the app.
 
-    Every request must send `Authorization: Bearer <token>`. Health/no-path
-    probes and anything else are rejected with 401. Uses a constant-time
-    comparison. The token value is never logged.
+    Every request must send `Authorization: Bearer <token>` (constant-time
+    compare; token never logged). A simple fixed-window per-process rate limit
+    (default 60 req/min) blunts brute-force / abuse if the tunnel URL leaks.
     """
+    import time as _time
+    from collections import deque
+
     from starlette.middleware.base import BaseHTTPMiddleware
     from starlette.responses import JSONResponse
 
     expected = f"Bearer {token}"
+    hits: deque[float] = deque()
 
-    class _TokenMiddleware(BaseHTTPMiddleware):
+    class _GateMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
             provided = request.headers.get("authorization", "")
             if not hmac.compare_digest(provided, expected):
@@ -378,6 +399,16 @@ def _add_token_gate(mcp, token: str) -> None:
                      "error": "missing or invalid bearer token"},
                     status_code=401,
                 )
+            now = _time.monotonic()
+            while hits and now - hits[0] > 60.0:
+                hits.popleft()
+            if len(hits) >= rate_limit_per_min:
+                return JSONResponse(
+                    {"ok": False, "error_code": "RATE_LIMITED",
+                     "error": "too many requests; slow down"},
+                    status_code=429,
+                )
+            hits.append(now)
             return await call_next(request)
 
     # FastMCP builds the Starlette app lazily; patch both HTTP app factories so
@@ -390,7 +421,7 @@ def _add_token_gate(mcp, token: str) -> None:
         def make_wrapped(orig):
             def wrapped(*a, **k):
                 app = orig(*a, **k)
-                app.add_middleware(_TokenMiddleware)
+                app.add_middleware(_GateMiddleware)
                 return app
             return wrapped
 
@@ -408,25 +439,49 @@ def main(argv: list[str] | None = None) -> int:
                         help="Default backend: mock|myfitnesspal|cookie-session "
                              "(env MFP_SYNC_BACKEND also works).")
     parser.add_argument("--home", default=None, help="Default local state dir.")
+    parser.add_argument("--browser", default=None,
+                        help="cookie-session browser: chrome|edge|brave|firefox|... "
+                             "(env MFP_COOKIE_BROWSER).")
+    parser.add_argument("--profile", default=None,
+                        help="cookie-session browser profile dir (env MFP_COOKIE_PROFILE).")
     parser.add_argument("--host", default="127.0.0.1",
                         help="HTTP bind host (default loopback; do not widen).")
     parser.add_argument("--port", type=int, default=8000, help="HTTP port.")
+    parser.add_argument("--rate-limit", type=int, default=60,
+                        help="Max HTTP requests per minute when exposed (default 60).")
+    parser.add_argument("--expose", action="store_true",
+                        help="Lock the tool surface to inline-JSON + read-only tools "
+                             "(hides file-path tools). Auto-enabled for HTTP transports.")
     args = parser.parse_args(argv)
+
+    # cookie-session browser/profile come from flags, else env, else defaults.
+    if args.browser:
+        os.environ["MFP_COOKIE_BROWSER"] = args.browser
+    if args.profile:
+        os.environ["MFP_COOKIE_PROFILE"] = args.profile
+
+    is_http = args.transport in HTTP_TRANSPORTS
+    # Any network-reachable transport is exposed: lock the surface down.
+    expose_mode = args.expose or is_http
 
     mcp = build_mcp(
         default_backend=args.backend, default_home=args.home,
-        host=args.host, port=args.port,
+        host=args.host, port=args.port, expose_mode=expose_mode,
     )
 
-    if args.transport in HTTP_TRANSPORTS:
+    if is_http:
         token = os.environ.get(TOKEN_ENV, "").strip()
         if not token:
             parser.error(
                 f"{args.transport} is network-reachable, so a bearer token is "
                 f"required. Set {TOKEN_ENV} to a strong secret, e.g.\n"
-                f'  export {TOKEN_ENV}="$(openssl rand -hex 32)"\n'
+                '  (macOS/Linux)  export MFP_MCP_TOKEN="$(openssl rand -hex 32)"\n'
+                "  (Windows PS)   "
+                '$env:MFP_MCP_TOKEN=(python -c "import secrets;print(secrets.token_hex(32))")\n'
                 "The server refuses to expose your diary without it."
             )
+        if len(token) < 24:
+            parser.error(f"{TOKEN_ENV} is too short; use at least 24 characters.")
         if args.host not in ("127.0.0.1", "::1", "localhost"):
             # Non-loopback bind is a deliberate exposure; require opt-in.
             if os.environ.get("MFP_MCP_ALLOW_NONLOCAL_BIND") != "1":
@@ -435,7 +490,7 @@ def main(argv: list[str] | None = None) -> int:
                     "default 127.0.0.1 and reach it through a tunnel (ngrok/Tunnels). "
                     "To override deliberately, set MFP_MCP_ALLOW_NONLOCAL_BIND=1."
                 )
-        _add_token_gate(mcp, token)
+        _add_token_gate(mcp, token, rate_limit_per_min=args.rate_limit)
 
     mcp.run(transport=args.transport)
     return 0

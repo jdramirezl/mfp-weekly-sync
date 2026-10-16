@@ -64,10 +64,24 @@ ChatGPT on the web can only reach a **public HTTPS** MCP server, so you must run
 an HTTP transport locally and tunnel it. **This publishes a diary-writing
 endpoint to the internet — the token gate is what keeps it yours.**
 
+When run over an HTTP transport the server enters **exposed mode** automatically:
+- Refuses to start without `MFP_MCP_TOKEN` (min 24 chars) and rejects any request
+  without `Authorization: Bearer <token>` (401).
+- Rate-limits to 60 requests/minute (`--rate-limit N` to change).
+- Hides the file-path tools. Only `plan_schema`, `doctor`, `preview_plan_json`,
+  `apply_plan_json`, and `export_diary` are reachable — a remote caller can't use
+  local file paths anyway, and this stops a leaked URL from reading the
+  filesystem. (Force this on any transport with `--expose`.)
+
+On **Windows**, follow [windows-agent-runbook.md](windows-agent-runbook.md) — a
+step-by-step runbook (installing, picking the browser, tunnel, ChatGPT connector)
+written so an agent on the Windows box can execute it.
+
 1. Pick a strong token and start the HTTP server (loopback):
    ```bash
    export MFP_MCP_TOKEN="$(openssl rand -hex 32)"
    export MFP_SYNC_BACKEND=cookie-session
+   export MFP_COOKIE_BROWSER=chrome        # or edge/brave/firefox
    mfp-sync-mcp --transport streamable-http --port 8000
    ```
    (It refuses to start if `MFP_MCP_TOKEN` is unset.)

@@ -55,6 +55,29 @@ def test_all_tools_registered(mcp):
                    "apply_plan", "apply_plan_json"}
 
 
+def test_expose_mode_hides_file_path_tools(tmp_path):
+    m = build_mcp(default_backend="mock", default_home=str(tmp_path / "s"), expose_mode=True)
+
+    async def names():
+        return {t.name for t in await m.list_tools()}
+    got = asyncio.run(names())
+    # File-path tools are gone; only inline-JSON + read-only remain.
+    assert got == {"plan_schema", "doctor", "preview_plan_json",
+                   "export_diary", "apply_plan_json"}
+    assert "preview_plan" not in got
+    assert "apply_plan" not in got
+    assert "resolve_plan" not in got
+    assert "status_plan" not in got
+
+
+def test_expose_mode_inline_tools_still_work(tmp_path):
+    m = build_mcp(default_backend="mock", default_home=str(tmp_path / "s"), expose_mode=True)
+    r = _call(m, "preview_plan_json", {"plan": PLAN})
+    assert r["ok"] is True and r["counts"].get("add") == 2
+    r2 = _call(m, "apply_plan_json", {"plan": PLAN, "confirm": True})
+    assert r2["applied"] is True and len(r2["result"]["added"]) == 2
+
+
 def test_plan_schema_tool(mcp):
     r = _call(mcp, "plan_schema", {})
     assert r["ok"] is True
@@ -170,11 +193,37 @@ def test_http_transport_requires_token(monkeypatch):
 
 
 def test_http_nonlocal_bind_refused_without_optin(monkeypatch):
-    monkeypatch.setenv(TOKEN_ENV, "x" * 16)
+    monkeypatch.setenv(TOKEN_ENV, "x" * 32)
     monkeypatch.delenv("MFP_MCP_ALLOW_NONLOCAL_BIND", raising=False)
     with pytest.raises(SystemExit) as ei:
         main(["--transport", "streamable-http", "--host", "0.0.0.0"])
     assert ei.value.code != 0
+
+
+def test_http_short_token_refused(monkeypatch):
+    monkeypatch.setenv(TOKEN_ENV, "short")
+    with pytest.raises(SystemExit) as ei:
+        main(["--transport", "streamable-http"])
+    assert ei.value.code != 0
+
+
+def test_token_middleware_rate_limits(tmp_path):
+    starlette_testclient = pytest.importorskip("starlette.testclient")
+    from mfp_sync.mcp_server import _add_token_gate
+
+    m = build_mcp(default_backend="mock", default_home=str(tmp_path / "s"),
+                  expose_mode=True)
+    # rate_limit_per_min=0 -> even a correctly-authed request is 429, so the
+    # limiter is exercised without reaching the (test-uninitialized) handler.
+    _add_token_gate(m, "secret-token-at-least-24-chars", rate_limit_per_min=0)
+    client = starlette_testclient.TestClient(m.streamable_http_app())
+    hdr = {"Authorization": "Bearer secret-token-at-least-24-chars"}
+    r = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"}, headers=hdr)
+    assert r.status_code == 429
+    assert r.json()["error_code"] == "RATE_LIMITED"
+    # And a missing token is still 401 (auth checked before rate limit).
+    r2 = client.post("/mcp", json={"jsonrpc": "2.0", "id": 1, "method": "ping"})
+    assert r2.status_code == 401
 
 
 def test_token_middleware_rejects_without_bearer(tmp_path):
