@@ -42,7 +42,7 @@ printf '%s' "$name" >>"\$STUB_LOG"
 for a in "\$@"; do printf ' %s' "\$a" >>"\$STUB_LOG"; done
 printf '\n' >>"\$STUB_LOG"
 if [ "$name" = launchctl ] && [ "\${1:-}" = print ]; then
-  [ -e "\$STUB_DIR/loaded-\${2##*/}" ] && exit 0
+  [ -e "\$STUB_DIR/loaded-\${2##*/}" ] && { cat "\$STUB_DIR/$name.out"; exit 0; }
   exit 1
 fi
 cat "\$STUB_DIR/$name.out"

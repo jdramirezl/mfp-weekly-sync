@@ -1,0 +1,37 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Rendered by bin/mfpctl install. Do not edit the installed copy by hand. -->
+<!-- Mason has no authentication: the host is hard-wired to 127.0.0.1. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>@MFP_MCP_BIN@</string>
+    <string>--http</string>
+    <string>--host</string>
+    <string>127.0.0.1</string>
+    <string>--port</string>
+    <string>@MFP_PORT@</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>@SERVICE_PATH@</string>
+    <key>MFP_MCP_DATA_DIR</key><string>@MFP_MCP_DATA_DIR@</string>
+    <key>FASTMCP_LOG_LEVEL</key><string>WARNING</string>@EXTRA_ENV@
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>@MFP_STATE_DIR@</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>@MFP_LOG_DIR@/mason.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>@MFP_LOG_DIR@/mason.err.log</string>
+</dict>
+</plist>
