@@ -15,6 +15,7 @@ venv/
 .coverage
 htmlcov/
 coverage.xml
+tools/tunnel-client/
 
 # Local application state — NEVER commit these (contain diary data / tokens)
 *.sqlite

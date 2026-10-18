@@ -715,24 +715,25 @@ def _add_token_gate(
         def make_wrapped(orig):
             def wrapped(*a, **k):
                 app = orig(*a, **k)
-                app.add_route(
-                    "/.well-known/oauth-authorization-server",
-                    oauth_auth_server_metadata,
-                    methods=["GET"],
-                )
-                app.add_route(
-                    "/.well-known/oauth-protected-resource",
-                    oauth_protected_resource_metadata,
-                    methods=["GET"],
-                )
-                app.add_route(
-                    "/mcp/.well-known/oauth-protected-resource",
-                    oauth_protected_resource_metadata,
-                    methods=["GET"],
-                )
-                app.add_route("/oauth/authorize", oauth_authorize, methods=["GET", "POST"])
-                app.add_route("/oauth/token", oauth_token, methods=["POST"])
-                app.add_route("/oauth/register", oauth_register, methods=["POST"])
+                if not allow_no_auth:
+                    app.add_route(
+                        "/.well-known/oauth-authorization-server",
+                        oauth_auth_server_metadata,
+                        methods=["GET"],
+                    )
+                    app.add_route(
+                        "/.well-known/oauth-protected-resource",
+                        oauth_protected_resource_metadata,
+                        methods=["GET"],
+                    )
+                    app.add_route(
+                        "/mcp/.well-known/oauth-protected-resource",
+                        oauth_protected_resource_metadata,
+                        methods=["GET"],
+                    )
+                    app.add_route("/oauth/authorize", oauth_authorize, methods=["GET", "POST"])
+                    app.add_route("/oauth/token", oauth_token, methods=["POST"])
+                    app.add_route("/oauth/register", oauth_register, methods=["POST"])
                 app.add_middleware(_GateMiddleware)
                 return app
             return wrapped
