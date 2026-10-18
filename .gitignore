@@ -1,32 +1,21 @@
-# Python
-__pycache__/
-*.py[cod]
-*.egg-info/
-.eggs/
-build/
-dist/
-.venv/
-venv/
+# Dev tooling fetched by `make tools`
+.tools/
+
+# Secrets and local config. NEVER commit these.
+*.env
 .env
-
-# Tooling
-.pytest_cache/
-.ruff_cache/
-.coverage
-htmlcov/
-coverage.xml
-tools/tunnel-client/
-
-# Local application state — NEVER commit these (contain diary data / tokens)
-*.sqlite
-*.sqlite3
-*.db
-mfp-sync-state/
-.mfp-sync/
 session.json
 creds.json
-config/settings.toml
+cookies.json
 secrets.toml
+
+# Local state / diary data
+*.state
+*.db
+*.sqlite
+*.sqlite3
+*.log
+browser-profile/
 
 # OS
 .DS_Store

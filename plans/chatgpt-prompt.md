@@ -1,13 +1,14 @@
-# ChatGPT prompt: generate a MyFitnessPal meal plan for mfp-weekly-sync
+# ChatGPT prompt: generate a MyFitnessPal meal plan
 
 This prompt is tuned so the JSON you get back **resolves cleanly** against
-MyFitnessPal's food database. Copy everything below the line into ChatGPT, edit
-the "My plan request" block, and save the reply as `plan.json`. Then:
+MyFitnessPal's food database. The output validates against
+[`weekly_plan.schema.json`](weekly_plan.schema.json).
 
-```bash
-mfp-sync --backend cookie-session preview plan.json   # check it
-mfp-sync --backend cookie-session apply   plan.json   # write it
-```
+> Status: the legacy `mfp-sync` CLI that consumed these plans was removed (see
+> the `legacy-mfp-sync` git tag). The schema and prompt are kept as the input
+> contract for the planned v2 weekly-plan workflow in assistant-hub, which will
+> log plans through Mason's draft → confirm tools following
+> [`docs/reconciliation-rules.md`](../docs/reconciliation-rules.md).
 
 ----------------------------------------------------------------------
 
