@@ -11,6 +11,11 @@ check passes. Commands are PowerShell. Stop and report to the user at any
 > that doesn't present it. Do not weaken these defaults. Do not print the token,
 > cookies, or any `*session*` value into the chat.
 
+> **Current SSO note:** If the legacy `cookie-session` doctor redirects to
+> `/account/login` even though the browser is logged in, use
+> [mason-mcp.md](mason-mcp.md). Mason runs as a separate `uv` tool because it
+> pins dependencies that should not be mixed into this project's virtualenv.
+
 ---
 
 ## 0. Prerequisites (verify, install only if missing)

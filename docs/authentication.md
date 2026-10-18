@@ -17,10 +17,11 @@ reads credentials/session from your local machine only.
 | offline / testing | `mock` | none |
 
 If you sign in with "Continue with Google" (or Apple), you have **no
-MyFitnessPal password**, so the `myfitnesspal` backend cannot work — use
-`cookie-session`.
+MyFitnessPal password**, so the `myfitnesspal` backend cannot work. The
+repository `cookie-session` backend is a legacy adapter; for current SSO
+web-session access, use [mason-mcp.md](mason-mcp.md).
 
-## cookie-session backend (SSO / Google login) — LIVE VERIFIED
+## cookie-session backend (legacy SSO / Google login)
 
 For SSO accounts, this backend reuses the authenticated session you already
 have in Chrome:
@@ -48,6 +49,10 @@ Requirements and limits:
   are still v10/v11, or the `myfitnesspal` backend if you have a password.
 - Sessions expire; when a call returns 401 the tool reports `SESSION_EXPIRED` —
   just reload myfitnesspal.com in Chrome and re-run.
+
+If the exchange returns HTML or redirects to `/account/login`, MyFitnessPal's
+current NextAuth session is not compatible with this legacy adapter. Use the
+Mason flow in [mason-mcp.md](mason-mcp.md); do not create another account.
 
 ### Account-specific meal names (why "snack" matters)
 
