@@ -400,7 +400,8 @@ def build_mcp(
             return ok_envelope(
                 confirm_required=True,
                 remote_id=remote_id,
-                message=f"confirm=false: nothing deleted. To permanently delete entry '{remote_id}', call again with confirm=true.",
+                message=f"confirm=false: nothing deleted. To permanently delete "
+                        f"entry '{remote_id}', call again with confirm=true.",
                 deleted=False,
             )
         with EngineSession(settings) as eng:
@@ -431,7 +432,9 @@ def build_mcp(
                 confirm_required=True,
                 count=len(remote_ids),
                 remote_ids=remote_ids,
-                message=f"confirm=false: nothing deleted. Call again with confirm=true to permanently delete these {len(remote_ids)} entries.",
+                message=f"confirm=false: nothing deleted. Call again with "
+                        f"confirm=true to permanently delete these "
+                        f"{len(remote_ids)} entries.",
                 deleted=False,
             )
         with EngineSession(settings) as eng:
@@ -501,7 +504,9 @@ def build_mcp(
                     meal=meal,
                     count=len(matching),
                     entries_to_delete=summary,
-                    message=f"confirm=false: nothing deleted. Found {len(matching)} entries in '{meal}' on {date}. Call again with confirm=true to delete them.",
+                    message=f"confirm=false: nothing deleted. Found {len(matching)} "
+                            f"entries in '{meal}' on {date}. Call again with "
+                            f"confirm=true to delete them.",
                     deleted=False,
                 )
 
@@ -565,7 +570,9 @@ def build_mcp(
                     date=date,
                     count=len(all_entries),
                     entries_to_delete=summary,
-                    message=f"confirm=false: nothing deleted. Found {len(all_entries)} entries on {date}. Call again with confirm=true to delete all entries for this day.",
+                    message=f"confirm=false: nothing deleted. Found "
+                            f"{len(all_entries)} entries on {date}. Call again with "
+                            f"confirm=true to delete all entries for this day.",
                     deleted=False,
                 )
 
@@ -690,7 +697,9 @@ def _add_token_gate(
                      "error": "missing or invalid bearer token"},
                     status_code=401,
                     headers={
-                        "WWW-Authenticate": f'Bearer resource_metadata="{base_url}/.well-known/oauth-protected-resource"'
+                        "WWW-Authenticate":
+                            f'Bearer resource_metadata='
+                            f'"{base_url}/.well-known/oauth-protected-resource"'
                     },
                 )
             now = _time.monotonic()

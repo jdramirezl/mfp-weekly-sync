@@ -28,6 +28,10 @@ mfp-sync-mcp --help
 Pick the backend with `--backend` or `MFP_SYNC_BACKEND` (e.g. `cookie-session`
 for a Google/SSO account; see `authentication.md`).
 
+For current MyFitnessPal SSO sessions, see [mason-mcp.md](mason-mcp.md). Mason
+is a separate MCP server using the current NextAuth cookie flow; it is not
+installed into this project's virtual environment.
+
 ---
 
 ## Method A — ChatGPT Desktop app (recommended, nothing exposed)

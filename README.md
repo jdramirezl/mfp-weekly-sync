@@ -25,15 +25,13 @@ ChatGPT  →  meal_plan.json  →  mfp-sync preview  →  mfp-sync apply  →  M
 - **Agent-friendly.** `--json` output, stable error codes, a JSON Schema for the
   plan, and a `--non-interactive` mode.
 
-> ⚠️ **Live sync status.** Two live backends exist (see "Backends" below). The
-> **`cookie-session`** backend (for Google/Apple SSO accounts) has been
-> **verified end-to-end against a real MyFitnessPal account** — authentication,
-> diary read, food search, a confirmed single write + read-back, delete, and
-> idempotent re-runs. The **`myfitnesspal`** (username/password) backend's
+> ⚠️ **Live sync status.** The `myfitnesspal` (username/password) backend's
 > credential-free steps are verified but its credentialed path is untested (no
-> password account was available). The underlying mobile/web APIs are
-> undocumented and reverse-engineered, so treat them as subject to change. See
-> [docs/architecture.md](docs/architecture.md) for the full validation record.
+> password account was available). The legacy `cookie-session` backend is
+> retained for compatibility, but current MyFitnessPal NextAuth sessions may
+> reject its cookie exchange. For current SSO web-session CRUD, use
+> [docs/mason-mcp.md](docs/mason-mcp.md). The underlying mobile/web APIs are
+> undocumented and reverse-engineered, so treat them as subject to change.
 
 ## Backends
 
@@ -49,7 +47,8 @@ If you sign in to MyFitnessPal with "Continue with Google", use `cookie-session`
 browser holds your session with `MFP_COOKIE_BROWSER` (`chrome`, `edge`, `brave`,
 `firefox`, …) and optionally `MFP_COOKIE_PROFILE`. On Windows, Firefox is the
 most reliable (Chrome/Edge's newest "app-bound" cookies can't be read outside
-the browser; the tool detects this and tells you to switch).
+the browser; the tool detects this and tells you to switch. For current
+NextAuth sessions, prefer the separate Mason integration.
 
 ## Requirements
 
