@@ -109,6 +109,12 @@ def _load_toml(path: Path) -> dict:
 
 def load_settings(config_path: Path | None = None) -> Settings:
     """Load settings from (optional) TOML, then layer environment variables."""
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     data: dict = {}
     if config_path is not None:
         data = _load_toml(config_path)

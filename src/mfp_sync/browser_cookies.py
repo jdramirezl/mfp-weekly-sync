@@ -113,7 +113,14 @@ def _canon_browser(browser: str) -> str:
 
 def _snapshot_db(src: Path, dst: str) -> None:
     """Copy a live (possibly WAL-mode) SQLite DB consistently, read-only."""
-    src_con = sqlite3.connect(f"file:{src}?mode=ro", uri=True)
+    uri = src.resolve().as_uri() + "?mode=ro"
+    try:
+        src_con = sqlite3.connect(uri, uri=True)
+    except sqlite3.OperationalError as exc:
+        raise CookieExtractionError(
+            f"unable to open database file at {src}. The browser is likely running and holding an exclusive lock on its cookie file. "
+            "Please close the browser completely or use Firefox/direct session cookies."
+        ) from exc
     try:
         dst_con = sqlite3.connect(dst)
         try:
@@ -498,7 +505,7 @@ def _extract_firefox(profile: str | None) -> dict[str, str]:
 
 
 def extract_mfp_cookies(browser: str = "Chrome", profile: str | None = None) -> dict[str, str]:
-    """Extract a live MyFitnessPal session from a local browser.
+    """Extract a live MyFitnessPal session from env vars, local cookie files, or a browser.
 
     `browser` is case-insensitive and accepts aliases ("chrome", "edge",
     "brave", "firefox", ...). `profile` optionally pins a browser profile
@@ -508,6 +515,62 @@ def extract_mfp_cookies(browser: str = "Chrome", profile: str | None = None) -> 
     Firefox on macOS, Windows, and Linux. Raises CookieExtractionError with an
     actionable message on failure.
     """
+    # 1. Check direct cookies from environment variables
+    cookie_str = os.environ.get("MFP_COOKIE_STRING") or os.environ.get("MFP_COOKIES")
+    if cookie_str:
+        cookies = {}
+        for part in cookie_str.split(";"):
+            if "=" in part:
+                k, v = part.strip().split("=", 1)
+                cookies[k] = v
+        if has_mfp_session(cookies):
+            return cookies
+
+    session_token = os.environ.get("MFP_SESSION_TOKEN")
+    if session_token:
+        token_clean = session_token.strip().strip('"').strip("'")
+        return {
+            "__Secure-next-auth.session-token": token_clean,
+            "_mfp_session": token_clean,
+        }
+
+    # 2. Check local cookies.json / cookies.txt in state directories or working dir
+    state_dirs = [
+        Path(os.environ.get("MFP_SYNC_HOME", ".mfp-sync")),
+        Path(".mfp-sync"),
+        Path("."),
+    ]
+    for sdir in state_dirs:
+        for fname in ("cookies.json", "cookies.txt"):
+            cfile = sdir / fname
+            if cfile.exists():
+                try:
+                    if fname.endswith(".json"):
+                        with open(cfile, "r", encoding="utf-8") as f:
+                            data = json.load(f)
+                        if isinstance(data, dict) and has_mfp_session(data):
+                            return data
+                        elif isinstance(data, list):
+                            cookies = {
+                                str(c.get("name", "")): str(c.get("value", ""))
+                                for c in data
+                                if isinstance(c, dict) and "name" in c and "value" in c
+                            }
+                            if has_mfp_session(cookies):
+                                return cookies
+                    else:
+                        with open(cfile, "r", encoding="utf-8") as f:
+                            text = f.read().strip()
+                        cookies = {}
+                        for part in text.split(";"):
+                            if "=" in part:
+                                k, v = part.strip().split("=", 1)
+                                cookies[k] = v
+                        if has_mfp_session(cookies):
+                            return cookies
+                except Exception:
+                    pass
+
     canon = _canon_browser(browser)
     if canon == "Firefox":
         return _extract_firefox(profile)

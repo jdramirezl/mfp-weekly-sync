@@ -100,3 +100,20 @@ def test_storage_sync_record_roundtrip(tmp_path: Path):
     assert again.remote_entry_id == "r123"
     assert len(s.records_for_plan("p")) == 1
     s.close()
+
+
+def test_storage_marks_remote_deletion(tmp_path: Path):
+    s = Storage(tmp_path / "s.sqlite")
+    rec = s.new_record(
+        plan_id="p", source_entry_id="e", date=dt.date(2026, 10, 19), meal="breakfast",
+        food_id="f", serving_id=None, servings=1.0, serving_unit="serving", serving_value=1.0,
+    )
+    rec.remote_entry_id = "remote-1"
+    s.upsert_sync_record(rec)
+
+    s.mark_remote_deleted("remote-1")
+
+    got = s.get_sync_record("p", "e")
+    assert got is not None
+    assert got.status == "deleted_remote"
+    s.close()

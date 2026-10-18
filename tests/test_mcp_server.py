@@ -50,9 +50,12 @@ def test_all_tools_registered(mcp):
     async def names():
         return {t.name for t in await mcp.list_tools()}
     got = asyncio.run(names())
-    assert got == {"plan_schema", "doctor", "preview_plan", "preview_plan_json",
-                   "status_plan", "resolve_plan", "export_diary",
-                   "apply_plan", "apply_plan_json"}
+    assert got == {
+        "plan_schema", "doctor", "preview_plan", "preview_plan_json",
+        "status_plan", "resolve_plan", "export_diary",
+        "apply_plan", "apply_plan_json",
+        "delete_entry", "delete_entries", "delete_meal", "delete_day"
+    }
 
 
 def test_expose_mode_hides_file_path_tools(tmp_path):
@@ -61,9 +64,12 @@ def test_expose_mode_hides_file_path_tools(tmp_path):
     async def names():
         return {t.name for t in await m.list_tools()}
     got = asyncio.run(names())
-    # File-path tools are gone; only inline-JSON + read-only remain.
-    assert got == {"plan_schema", "doctor", "preview_plan_json",
-                   "export_diary", "apply_plan_json"}
+    # File-path tools are gone; only inline-JSON + read-only + delete tools remain.
+    assert got == {
+        "plan_schema", "doctor", "preview_plan_json",
+        "export_diary", "apply_plan_json",
+        "delete_entry", "delete_entries", "delete_meal", "delete_day"
+    }
     assert "preview_plan" not in got
     assert "apply_plan" not in got
     assert "resolve_plan" not in got
@@ -105,6 +111,40 @@ def test_apply_is_idempotent(mcp, plan_file):
     r2 = _call(mcp, "apply_plan", {"plan_path": str(plan_file)})
     assert r2["ok"] is True
     assert r2["result"]["added"] == []
+
+
+def test_delete_entry_requires_confirmation_and_updates_ledger(mcp, tmp_path):
+    home = str(tmp_path / "state")
+    applied = _call(mcp, "apply_plan_json", {"plan": PLAN, "confirm": True, "home": home})
+    assert applied["applied"] is True
+
+    exported = _call(mcp, "export_diary", {
+        "from_date": "2026-10-19", "to_date": "2026-10-19", "home": home,
+    })
+    remote_id = exported["days"][0]["entries"][0]["remote_id"]
+
+    preview = _call(mcp, "delete_entry", {"remote_id": remote_id, "home": home})
+    assert preview["deleted"] is False
+    assert preview["confirm_required"] is True
+    assert len(_call(mcp, "export_diary", {
+        "from_date": "2026-10-19", "to_date": "2026-10-19", "home": home,
+    })["days"][0]["entries"]) == 2
+
+    result = _call(mcp, "delete_entry", {
+        "remote_id": remote_id, "confirm": True, "home": home,
+    })
+    assert result["deleted"] is True
+    remaining = _call(mcp, "export_diary", {
+        "from_date": "2026-10-19", "to_date": "2026-10-19", "home": home,
+    })["days"][0]["entries"]
+    assert len(remaining) == 1
+
+    from mfp_sync.storage import Storage
+    with Storage(tmp_path / "state" / "state.sqlite") as storage:
+        records = storage.records_for_plan("mcp-test")
+        deleted = [r for r in records if r.remote_entry_id == remote_id]
+        assert len(deleted) == 1
+        assert deleted[0].status == "deleted_remote"
 
 
 def test_apply_blocks_on_unresolved(mcp, tmp_path):

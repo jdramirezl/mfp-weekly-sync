@@ -210,6 +210,15 @@ class Storage:
         ).fetchall()
         return [_row_to_sync(r) for r in rows]
 
+    def mark_remote_deleted(self, remote_entry_id: str) -> None:
+        """Record that a remotely managed diary entry was deleted."""
+        self._conn.execute(
+            "UPDATE sync_record SET status = ?, updated_at = ? "
+            "WHERE remote_entry_id = ?",
+            (SYNC_STATUS_DELETED_REMOTE, _utcnow(), remote_entry_id),
+        )
+        self._conn.commit()
+
     def claimed_remote_ids(self) -> set[str]:
         """Remote diary entry IDs already owned by SOME sync record (any plan).
 

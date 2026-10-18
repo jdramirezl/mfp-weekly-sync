@@ -100,6 +100,10 @@ def _apply(eng, plan, *, restore_deleted: bool) -> dict[str, Any]:
     return {"ok": result.ok, "error_code": code, "result": apply_result_to_dict(result)}
 
 
+def _record_remote_deletion(eng, remote_id: str) -> None:
+    eng.storage.mark_remote_deleted(remote_id)
+
+
 def _guard(fn):
     """Wrap a tool body so any MfpSyncError becomes the standard error envelope.
 
@@ -139,6 +143,15 @@ def build_mcp(
     `export_diary`.
     """
     from mcp.server.fastmcp import FastMCP
+    try:
+        from mcp.server.transport_security import TransportSecuritySettings
+        ts = TransportSecuritySettings(enable_dns_rebinding_protection=False) if expose_mode else None
+    except ImportError:
+        ts = None
+
+    fastmcp_kwargs = {"host": host, "port": port}
+    if ts is not None:
+        fastmcp_kwargs["transport_security"] = ts
 
     mcp = FastMCP(
         SERVER_NAME,
@@ -149,8 +162,7 @@ def build_mcp(
             "`apply_plan_json` with confirm=true to write. Re-running the same "
             "plan is idempotent — it never duplicates entries."
         ),
-        host=host,
-        port=port,
+        **fastmcp_kwargs,
     )
 
     # File-path tools are registered only when NOT exposed. Use this decorator
@@ -368,36 +380,318 @@ def build_mcp(
             result["applied"] = result.get("ok", False)
             return result
 
+    # -- deletion tools ----------------------------------------------------
+
+    @mcp.tool()
+    @_guard
+    def delete_entry(
+        remote_id: str,
+        confirm: bool = False,
+        backend: str | None = None,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete a single diary entry by its UUID (remote_id).
+
+        Requires `confirm=true` to perform the actual deletion. When confirm=false
+        (default), it returns a safety confirmation request and deletes nothing.
+        """
+        settings = _settings(backend or default_backend, home or default_home, None)
+        if not confirm:
+            return ok_envelope(
+                confirm_required=True,
+                remote_id=remote_id,
+                message=f"confirm=false: nothing deleted. To permanently delete entry '{remote_id}', call again with confirm=true.",
+                deleted=False,
+            )
+        with EngineSession(settings) as eng:
+            eng.backend.delete_entry(remote_id)
+            _record_remote_deletion(eng, remote_id)
+            return ok_envelope(
+                deleted=True,
+                remote_id=remote_id,
+                message=f"Successfully deleted entry {remote_id}",
+            )
+
+    @mcp.tool()
+    @_guard
+    def delete_entries(
+        remote_ids: list[str],
+        confirm: bool = False,
+        backend: str | None = None,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete multiple diary entries by a list of UUIDs (remote_ids).
+
+        Requires `confirm=true` to perform the deletions. When confirm=false
+        (default), it previews the list and count to be deleted and makes NO changes.
+        """
+        settings = _settings(backend or default_backend, home or default_home, None)
+        if not confirm:
+            return ok_envelope(
+                confirm_required=True,
+                count=len(remote_ids),
+                remote_ids=remote_ids,
+                message=f"confirm=false: nothing deleted. Call again with confirm=true to permanently delete these {len(remote_ids)} entries.",
+                deleted=False,
+            )
+        with EngineSession(settings) as eng:
+            deleted: list[str] = []
+            errors: list[dict[str, str]] = []
+            for rid in remote_ids:
+                try:
+                    eng.backend.delete_entry(rid)
+                    deleted.append(rid)
+                    _record_remote_deletion(eng, rid)
+                except Exception as exc:
+                    errors.append({"remote_id": rid, "error": str(exc)})
+            return ok_envelope(
+                deleted=True,
+                total_requested=len(remote_ids),
+                deleted_count=len(deleted),
+                deleted_ids=deleted,
+                errors=errors,
+                message=f"Deleted {len(deleted)} of {len(remote_ids)} entries.",
+            )
+
+    @mcp.tool()
+    @_guard
+    def delete_meal(
+        date: str,
+        meal: str,
+        confirm: bool = False,
+        backend: str | None = None,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete all diary entries for a specific date (YYYY-MM-DD) and meal name
+        (e.g. 'breakfast', 'lunch', 'dinner', 'snacks morning').
+
+        Requires `confirm=true` to perform the deletions. When confirm=false
+        (default), it previews the matching entries found and makes NO changes.
+        """
+        settings = _settings(backend or default_backend, home or default_home, None)
+        try:
+            day = dt.date.fromisoformat(date)
+        except ValueError as exc:
+            raise MfpSyncError(f"invalid date: {exc}", code=ErrorCode.INVALID_PLAN) from exc
+
+        with EngineSession(settings) as eng:
+            all_entries = eng.backend.get_diary(day)
+            target_meal = meal.strip().lower()
+            matching = [
+                e for e in all_entries
+                if e.meal.strip().lower() == target_meal
+                or target_meal in e.meal.strip().lower()
+            ]
+
+            summary = [
+                {
+                    "remote_id": e.remote_id,
+                    "meal": e.meal,
+                    "food": e.food_description,
+                    "servings": e.servings,
+                    "calories": e.calories,
+                }
+                for e in matching
+            ]
+
+            if not confirm:
+                return ok_envelope(
+                    confirm_required=True,
+                    date=date,
+                    meal=meal,
+                    count=len(matching),
+                    entries_to_delete=summary,
+                    message=f"confirm=false: nothing deleted. Found {len(matching)} entries in '{meal}' on {date}. Call again with confirm=true to delete them.",
+                    deleted=False,
+                )
+
+            deleted_ids: list[str] = []
+            errors: list[dict[str, str]] = []
+            for item in matching:
+                if not item.remote_id:
+                    continue
+                try:
+                    eng.backend.delete_entry(item.remote_id)
+                    deleted_ids.append(item.remote_id)
+                    _record_remote_deletion(eng, item.remote_id)
+                except Exception as exc:
+                    errors.append({"remote_id": item.remote_id, "error": str(exc)})
+
+            return ok_envelope(
+                deleted=True,
+                date=date,
+                meal=meal,
+                deleted_count=len(deleted_ids),
+                deleted_ids=deleted_ids,
+                errors=errors,
+                message=f"Deleted {len(deleted_ids)} entries from '{meal}' on {date}.",
+            )
+
+    @mcp.tool()
+    @_guard
+    def delete_day(
+        date: str,
+        confirm: bool = False,
+        backend: str | None = None,
+        home: str | None = None,
+    ) -> dict[str, Any]:
+        """Delete all diary entries across all meals for an entire day (YYYY-MM-DD).
+
+        Requires `confirm=true` to perform the deletions. When confirm=false
+        (default), it previews all entries found for that day and makes NO changes.
+        """
+        settings = _settings(backend or default_backend, home or default_home, None)
+        try:
+            day = dt.date.fromisoformat(date)
+        except ValueError as exc:
+            raise MfpSyncError(f"invalid date: {exc}", code=ErrorCode.INVALID_PLAN) from exc
+
+        with EngineSession(settings) as eng:
+            all_entries = eng.backend.get_diary(day)
+            summary = [
+                {
+                    "remote_id": e.remote_id,
+                    "meal": e.meal,
+                    "food": e.food_description,
+                    "servings": e.servings,
+                    "calories": e.calories,
+                }
+                for e in all_entries
+            ]
+
+            if not confirm:
+                return ok_envelope(
+                    confirm_required=True,
+                    date=date,
+                    count=len(all_entries),
+                    entries_to_delete=summary,
+                    message=f"confirm=false: nothing deleted. Found {len(all_entries)} entries on {date}. Call again with confirm=true to delete all entries for this day.",
+                    deleted=False,
+                )
+
+            deleted_ids: list[str] = []
+            errors: list[dict[str, str]] = []
+            for item in all_entries:
+                if not item.remote_id:
+                    continue
+                try:
+                    eng.backend.delete_entry(item.remote_id)
+                    deleted_ids.append(item.remote_id)
+                    _record_remote_deletion(eng, item.remote_id)
+                except Exception as exc:
+                    errors.append({"remote_id": item.remote_id, "error": str(exc)})
+
+            return ok_envelope(
+                deleted=True,
+                date=date,
+                deleted_count=len(deleted_ids),
+                deleted_ids=deleted_ids,
+                errors=errors,
+                message=f"Deleted {len(deleted_ids)} entries for date {date}.",
+            )
+
     return mcp
 
 
 # -- token gate for HTTP transports ------------------------------------------
 
 
-def _add_token_gate(mcp, token: str, rate_limit_per_min: int = 60) -> None:
-    """Install fail-closed bearer-token + rate-limit middleware on the app.
-
-    Every request must send `Authorization: Bearer <token>` (constant-time
-    compare; token never logged). A simple fixed-window per-process rate limit
-    (default 60 req/min) blunts brute-force / abuse if the tunnel URL leaks.
+def _add_token_gate(
+    mcp, token: str, rate_limit_per_min: int = 60, allow_no_auth: bool = False
+) -> None:
+    """Install bearer-token + rate-limit middleware, along with RFC 8414 / RFC 9728
+    OAuth 2.0 discovery and endpoints on the app for ChatGPT connector support.
     """
+    import secrets
     import time as _time
     from collections import deque
 
     from starlette.middleware.base import BaseHTTPMiddleware
-    from starlette.responses import JSONResponse
+    from starlette.responses import HTMLResponse, JSONResponse, RedirectResponse
 
     expected = f"Bearer {token}"
     hits: deque[float] = deque()
 
+    def get_base_url(request):
+        scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+        host = request.headers.get(
+            "x-forwarded-host", request.headers.get("host", request.url.netloc)
+        )
+        return f"{scheme}://{host}"
+
+    async def oauth_auth_server_metadata(request):
+        base_url = get_base_url(request)
+        return JSONResponse({
+            "issuer": base_url,
+            "authorization_endpoint": f"{base_url}/oauth/authorize",
+            "token_endpoint": f"{base_url}/oauth/token",
+            "registration_endpoint": f"{base_url}/oauth/register",
+            "response_types_supported": ["code"],
+            "grant_types_supported": ["authorization_code", "refresh_token"],
+            "token_endpoint_auth_methods_supported": ["none", "client_secret_post", "client_secret_basic"],
+            "code_challenge_methods_supported": ["S256", "plain"],
+            "scopes_supported": ["mfp:read", "mfp:write"],
+        })
+
+    async def oauth_protected_resource_metadata(request):
+        base_url = get_base_url(request)
+        return JSONResponse({
+            "resource": f"{base_url}/mcp",
+            "authorization_servers": [base_url],
+            "scopes_supported": ["mfp:read", "mfp:write"],
+        })
+
+    async def oauth_authorize(request):
+        redirect_uri = request.query_params.get("redirect_uri")
+        state = request.query_params.get("state", "")
+        code = "mfp_" + secrets.token_hex(16)
+        if redirect_uri:
+            sep = "&" if "?" in redirect_uri else "?"
+            return RedirectResponse(f"{redirect_uri}{sep}code={code}&state={state}", status_code=302)
+        return HTMLResponse("<html><body><h3>Authorized! You can close this window.</h3></body></html>")
+
+    async def oauth_token(request):
+        return JSONResponse({
+            "access_token": token,
+            "token_type": "Bearer",
+            "expires_in": 31536000,
+            "scope": "mfp:read mfp:write",
+        })
+
+    async def oauth_register(request):
+        try:
+            body = await request.json()
+        except Exception:
+            body = {}
+        return JSONResponse({
+            "client_id": "chatgpt-mfp-client",
+            "client_secret": "chatgpt-mfp-secret",
+            "client_name": body.get("client_name", "ChatGPT"),
+            "redirect_uris": body.get("redirect_uris", []),
+            "token_endpoint_auth_method": "none",
+        }, status_code=201)
+
     class _GateMiddleware(BaseHTTPMiddleware):
         async def dispatch(self, request, call_next):
+            path = request.url.path
+            # Let OAuth discovery, registration, authorize, and token routes bypass the bearer check
+            if (
+                path.startswith("/.well-known/")
+                or path.startswith("/oauth/")
+                or "/.well-known/" in path
+            ):
+                return await call_next(request)
+
             provided = request.headers.get("authorization", "")
-            if not hmac.compare_digest(provided, expected):
+            if not (allow_no_auth or (provided and hmac.compare_digest(provided, expected))):
+                base_url = get_base_url(request)
                 return JSONResponse(
                     {"ok": False, "error_code": "AUTH_FAILED",
                      "error": "missing or invalid bearer token"},
                     status_code=401,
+                    headers={
+                        "WWW-Authenticate": f'Bearer resource_metadata="{base_url}/.well-known/oauth-protected-resource"'
+                    },
                 )
             now = _time.monotonic()
             while hits and now - hits[0] > 60.0:
@@ -421,6 +715,24 @@ def _add_token_gate(mcp, token: str, rate_limit_per_min: int = 60) -> None:
         def make_wrapped(orig):
             def wrapped(*a, **k):
                 app = orig(*a, **k)
+                app.add_route(
+                    "/.well-known/oauth-authorization-server",
+                    oauth_auth_server_metadata,
+                    methods=["GET"],
+                )
+                app.add_route(
+                    "/.well-known/oauth-protected-resource",
+                    oauth_protected_resource_metadata,
+                    methods=["GET"],
+                )
+                app.add_route(
+                    "/mcp/.well-known/oauth-protected-resource",
+                    oauth_protected_resource_metadata,
+                    methods=["GET"],
+                )
+                app.add_route("/oauth/authorize", oauth_authorize, methods=["GET", "POST"])
+                app.add_route("/oauth/token", oauth_token, methods=["POST"])
+                app.add_route("/oauth/register", oauth_register, methods=["POST"])
                 app.add_middleware(_GateMiddleware)
                 return app
             return wrapped
@@ -429,6 +741,12 @@ def _add_token_gate(mcp, token: str, rate_limit_per_min: int = 60) -> None:
 
 
 def main(argv: list[str] | None = None) -> int:
+    try:
+        from dotenv import load_dotenv
+        load_dotenv()
+    except ImportError:
+        pass
+
     parser = argparse.ArgumentParser(prog="mfp-sync-mcp", description=__doc__)
     parser.add_argument(
         "--transport", default="stdio",
@@ -452,6 +770,8 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--expose", action="store_true",
                         help="Lock the tool surface to inline-JSON + read-only tools "
                              "(hides file-path tools). Auto-enabled for HTTP transports.")
+    parser.add_argument("--allow-no-auth", action="store_true",
+                        help="Allow unauthenticated requests (useful for ChatGPT No-Auth connector).")
     args = parser.parse_args(argv)
 
     # cookie-session browser/profile come from flags, else env, else defaults.
@@ -490,7 +810,13 @@ def main(argv: list[str] | None = None) -> int:
                     "default 127.0.0.1 and reach it through a tunnel (ngrok/Tunnels). "
                     "To override deliberately, set MFP_MCP_ALLOW_NONLOCAL_BIND=1."
                 )
-        _add_token_gate(mcp, token, rate_limit_per_min=args.rate_limit)
+        allow_no_auth = (
+            args.allow_no_auth
+            or os.environ.get("MFP_MCP_ALLOW_NO_AUTH", "").lower() in ("1", "true", "yes")
+        )
+        _add_token_gate(
+            mcp, token, rate_limit_per_min=args.rate_limit, allow_no_auth=allow_no_auth
+        )
 
     mcp.run(transport=args.transport)
     return 0
