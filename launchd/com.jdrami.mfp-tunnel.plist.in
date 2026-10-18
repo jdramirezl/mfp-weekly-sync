@@ -1,0 +1,36 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Rendered by bin/mfpctl tunnel enable. Optional: lets ChatGPT reach Mason
+     through OpenAI's outbound-only tunnel. Holds no secrets; tunnel-run.sh
+     reads them from ~/.config/mfp-mason/tunnel.env (0600). -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@TUNNEL_SCRIPT@</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>@SERVICE_PATH@</string>
+    <key>TUNNEL_CLIENT_BIN</key><string>@TUNNEL_CLIENT_BIN@</string>
+    <key>MFP_CONFIG_DIR</key><string>@MFP_CONFIG_DIR@</string>
+    <key>MFP_PORT</key><string>@MFP_PORT@</string>
+    <key>TUNNEL_HEALTH_ADDR</key><string>@TUNNEL_HEALTH_ADDR@</string>
+  </dict>
+  <key>WorkingDirectory</key>
+  <string>@MFP_STATE_DIR@</string>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>KeepAlive</key>
+  <true/>
+  <key>ThrottleInterval</key>
+  <integer>30</integer>
+  <key>StandardOutPath</key>
+  <string>@MFP_LOG_DIR@/tunnel.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>@MFP_LOG_DIR@/tunnel.err.log</string>
+</dict>
+</plist>

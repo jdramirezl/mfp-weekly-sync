@@ -296,6 +296,79 @@ cmd_health() {
   exec /bin/bash "$REPO_ROOT/scripts/health-check.sh" "$@"
 }
 
+# --- optional tunnel ---------------------------------------------------------------
+resolve_tunnel_client_bin() {
+  local p
+  if [ -n "${TUNNEL_CLIENT_BIN:-}" ]; then
+    case "$TUNNEL_CLIENT_BIN" in /*) ;; *) die "TUNNEL_CLIENT_BIN must be an absolute path" ;; esac
+    printf '%s\n' "$TUNNEL_CLIENT_BIN"
+  elif p="$(command -v tunnel-client 2>/dev/null)" && [ -n "$p" ]; then
+    printf '%s\n' "$p"
+  elif [ "$DRY_RUN" = 1 ]; then
+    warn "tunnel-client not found; using a placeholder path for the dry run."
+    printf '%s\n' "/opt/homebrew/bin/tunnel-client"
+  else
+    die "tunnel-client not found. Run: scripts/install-mac.sh --with-tunnel"
+  fi
+}
+
+# Checks tunnel.env exists, is 0600 and has both keys, without loading or
+# printing the values.
+check_tunnel_env() {
+  local f="$MFP_CONFIG_DIR/tunnel.env" mode key
+  [ -f "$f" ] || die "missing $f. Copy tunnel.env.example to tunnel.env, fill it in, chmod 600."
+  mode="$(file_mode "$f")"
+  case "$mode" in 600 | 400) ;; *) die "$f has mode $mode; run: chmod 600 \"$f\"" ;; esac
+  for key in CONTROL_PLANE_TUNNEL_ID CONTROL_PLANE_API_KEY; do
+    grep -Eq "^(export )?${key}=[\"']?[^\"'[:space:]]" "$f" || die "$key is empty in $f"
+  done
+}
+
+render_tunnel() {
+  local bin="$1"
+  render_template "$REPO_ROOT/launchd/$LABEL_TUNNEL.plist.in" \
+    "LABEL=$LABEL_TUNNEL" \
+    "TUNNEL_SCRIPT=$(xml_escape "$RUNTIME_BIN_DIR/tunnel-run.sh")" \
+    "SERVICE_PATH=$(xml_escape "$SERVICE_PATH_BASE:$(dirname "$bin")")" \
+    "TUNNEL_CLIENT_BIN=$(xml_escape "$bin")" \
+    "MFP_CONFIG_DIR=$(xml_escape "$MFP_CONFIG_DIR")" \
+    "MFP_PORT=$MFP_PORT" \
+    "TUNNEL_HEALTH_ADDR=$(xml_escape "$TUNNEL_HEALTH_ADDR")" \
+    "MFP_STATE_DIR=$(xml_escape "$MFP_STATE_DIR")" \
+    "MFP_LOG_DIR=$(xml_escape "$MFP_LOG_DIR")"
+}
+
+cmd_tunnel() {
+  local sub="${1:-}" bin content
+  case "$sub" in
+    enable)
+      check_tunnel_env
+      case "$TUNNEL_HEALTH_ADDR" in 127.0.0.1:*) ;; *) die "TUNNEL_HEALTH_ADDR must stay on 127.0.0.1" ;; esac
+      bin="$(resolve_tunnel_client_bin)"
+      [ -e "$(plist_path "$LABEL_MASON")" ] || warn "Mason service is not installed yet; run: mfpctl install"
+      content="$(render_tunnel "$bin")"
+      ensure_dirs
+      install_runtime_scripts
+      install_agent "$LABEL_TUNNEL" "$content"
+      [ "$DRY_RUN" = 1 ] || log "Tunnel enabled. In ChatGPT add a Tunnel connector with your tunnel_ id and No authentication."
+      ;;
+    disable)
+      remove_agent "$LABEL_TUNNEL"
+      [ "$DRY_RUN" = 1 ] || log "Tunnel disabled. Mason itself keeps running for the hub."
+      ;;
+    status)
+      agent_summary "$LABEL_TUNNEL"
+      if curl -fsS --max-time 5 -o /dev/null "http://$TUNNEL_HEALTH_ADDR/readyz" 2>/dev/null; then
+        printf 'tunnel-client http://%s/readyz: ready\n' "$TUNNEL_HEALTH_ADDR"
+      else
+        printf 'tunnel-client http://%s/readyz: NOT ready\n' "$TUNNEL_HEALTH_ADDR"
+        return 1
+      fi
+      ;;
+    *) die "usage: mfpctl tunnel enable|disable|status" ;;
+  esac
+}
+
 cmd="${1:-help}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
@@ -307,6 +380,7 @@ case "$cmd" in
   status) cmd_status ;;
   logs) cmd_logs "$@" ;;
   health) cmd_health "$@" ;;
+  tunnel) cmd_tunnel "$@" ;;
   help) usage ;;
   *)
     usage >&2
