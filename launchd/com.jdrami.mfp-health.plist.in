@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Rendered by bin/mfpctl install. Daily Mason health check: no KeepAlive, no polling. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@HEALTH_SCRIPT@</string>
+    <string>--wait</string>
+    <string>120</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>@SERVICE_PATH@</string>
+    <key>MFP_MCP_BIN</key><string>@MFP_MCP_BIN@</string>
+    <key>MFP_MCP_DATA_DIR</key><string>@MFP_MCP_DATA_DIR@</string>
+    <key>MFP_STATE_DIR</key><string>@MFP_STATE_DIR@</string>
+    <key>MFP_CONFIG_DIR</key><string>@MFP_CONFIG_DIR@</string>
+    <key>MFP_LOG_DIR</key><string>@MFP_LOG_DIR@</string>
+    <key>LAUNCH_AGENTS_DIR</key><string>@LAUNCH_AGENTS_DIR@</string>
+    <key>MFP_PORT</key><string>@MFP_PORT@</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Hour</key>
+    <integer>9</integer>
+    <key>Minute</key>
+    <integer>0</integer>
+  </dict>
+  <key>RunAtLoad</key>
+  <true/>
+  <key>StandardOutPath</key>
+  <string>@MFP_LOG_DIR@/health.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>@MFP_LOG_DIR@/health.err.log</string>
+</dict>
+</plist>

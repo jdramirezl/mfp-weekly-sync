@@ -106,6 +106,36 @@ render_mason() {
 }
 
 # --- launchd plumbing -------------------------------------------------------------
+RUNTIME_BIN_DIR="$MFP_STATE_DIR/bin"
+
+# The LaunchAgents run copies of the scripts from the state dir, so moving or
+# renaming this repo checkout never breaks the installed services.
+install_runtime_scripts() {
+  local f
+  run mkdir -p "$RUNTIME_BIN_DIR/lib"
+  for f in health-check.sh tunnel-run.sh; do
+    [ -f "$REPO_ROOT/scripts/$f" ] || continue
+    run cp "$REPO_ROOT/scripts/$f" "$RUNTIME_BIN_DIR/$f"
+    run chmod 755 "$RUNTIME_BIN_DIR/$f"
+  done
+  run cp "$REPO_ROOT/scripts/lib/common.sh" "$RUNTIME_BIN_DIR/lib/common.sh"
+  run chmod 644 "$RUNTIME_BIN_DIR/lib/common.sh"
+}
+
+render_health() {
+  local bin="$1"
+  render_template "$REPO_ROOT/launchd/$LABEL_HEALTH.plist.in" \
+    "LABEL=$LABEL_HEALTH" \
+    "HEALTH_SCRIPT=$(xml_escape "$RUNTIME_BIN_DIR/health-check.sh")" \
+    "SERVICE_PATH=$(xml_escape "$SERVICE_PATH_BASE:$(dirname "$bin")")" \
+    "MFP_MCP_BIN=$(xml_escape "$bin")" \
+    "MFP_MCP_DATA_DIR=$(xml_escape "$MFP_MCP_DATA_DIR")" \
+    "MFP_STATE_DIR=$(xml_escape "$MFP_STATE_DIR")" \
+    "MFP_CONFIG_DIR=$(xml_escape "$MFP_CONFIG_DIR")" \
+    "MFP_LOG_DIR=$(xml_escape "$MFP_LOG_DIR")" \
+    "LAUNCH_AGENTS_DIR=$(xml_escape "$LAUNCH_AGENTS_DIR")" \
+    "MFP_PORT=$MFP_PORT"
+}
 ensure_dirs() {
   local d
   for d in "$MFP_STATE_DIR" "$MFP_LOG_DIR"; do
@@ -190,12 +220,15 @@ agent_summary() {
 
 # --- commands -----------------------------------------------------------------------
 cmd_install() {
-  local bin content
+  local bin content health
   require_loopback_host
   bin="$(resolve_mfp_mcp_bin)"
   content="$(render_mason "$bin")"
+  health="$(render_health "$bin")"
   ensure_dirs
+  install_runtime_scripts
   install_agent "$LABEL_MASON" "$content"
+  install_agent "$LABEL_HEALTH" "$health"
   [ "$DRY_RUN" = 1 ] || log "Mason is starting on $MFP_MCP_URL. Check with: mfpctl status"
 }
 
@@ -254,6 +287,15 @@ cmd_logs() {
   tail -n 50 "${files[@]}"
 }
 
+cmd_health() {
+  local bin
+  # Best effort: the health script reports a missing binary itself.
+  if [ -z "${MFP_MCP_BIN:-}" ] && bin="$(DRY_RUN=0 resolve_mfp_mcp_bin 2>/dev/null)"; then
+    export MFP_MCP_BIN="$bin"
+  fi
+  exec /bin/bash "$REPO_ROOT/scripts/health-check.sh" "$@"
+}
+
 cmd="${1:-help}"
 [ $# -gt 0 ] && shift
 case "$cmd" in
@@ -264,6 +306,7 @@ case "$cmd" in
   restart) cmd_restart ;;
   status) cmd_status ;;
   logs) cmd_logs "$@" ;;
+  health) cmd_health "$@" ;;
   help) usage ;;
   *)
     usage >&2
