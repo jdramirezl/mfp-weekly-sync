@@ -118,7 +118,8 @@ def _snapshot_db(src: Path, dst: str) -> None:
         src_con = sqlite3.connect(uri, uri=True)
     except sqlite3.OperationalError as exc:
         raise CookieExtractionError(
-            f"unable to open database file at {src}. The browser is likely running and holding an exclusive lock on its cookie file. "
+            f"unable to open database file at {src}. The browser is likely running "
+            "and holding an exclusive lock on its cookie file. "
             "Please close the browser completely or use Firefox/direct session cookies."
         ) from exc
     try:
@@ -546,7 +547,7 @@ def extract_mfp_cookies(browser: str = "Chrome", profile: str | None = None) -> 
             if cfile.exists():
                 try:
                     if fname.endswith(".json"):
-                        with open(cfile, "r", encoding="utf-8") as f:
+                        with open(cfile, encoding="utf-8") as f:
                             data = json.load(f)
                         if isinstance(data, dict) and has_mfp_session(data):
                             return data
@@ -559,7 +560,7 @@ def extract_mfp_cookies(browser: str = "Chrome", profile: str | None = None) -> 
                             if has_mfp_session(cookies):
                                 return cookies
                     else:
-                        with open(cfile, "r", encoding="utf-8") as f:
+                        with open(cfile, encoding="utf-8") as f:
                             text = f.read().strip()
                         cookies = {}
                         for part in text.split(";"):
