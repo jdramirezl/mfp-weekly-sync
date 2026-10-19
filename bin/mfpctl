@@ -20,6 +20,10 @@ Service commands:
   status             Show launchd state and probe the MCP endpoint.
   logs [-f]          Show (or follow) the service logs.
 
+Session:
+  auth [--username NAME]
+                     Re-authenticate from a piped cookie: pbpaste | mfpctl auth
+
 Health:
   health [--simulate-fail mcp|auth|tunnel] [--wait SECONDS]
                      Run the health check now (alerts on Telegram when state changes).
@@ -57,36 +61,8 @@ case "$MFP_PORT" in
   '' | *[!0-9]*) die "MFP_PORT must be a number (got '$MFP_PORT')" ;;
 esac
 
-have() { command -v "$1" >/dev/null 2>&1; }
 plist_path() { printf '%s/%s.plist' "$LAUNCH_AGENTS_DIR" "$1"; }
 is_loaded() { launchctl print "$DOMAIN/$1" >/dev/null 2>&1; }
-
-# --- binaries -------------------------------------------------------------------
-resolve_mfp_mcp_bin() {
-  local d p
-  if [ -n "${MFP_MCP_BIN:-}" ]; then
-    case "$MFP_MCP_BIN" in /*) ;; *) die "MFP_MCP_BIN must be an absolute path" ;; esac
-    printf '%s\n' "$MFP_MCP_BIN"
-    return
-  fi
-  if have uv && d="$(uv tool dir --bin 2>/dev/null)" && [ -x "$d/mfp-mcp" ]; then
-    printf '%s\n' "$d/mfp-mcp"
-    return
-  fi
-  if p="$(command -v mfp-mcp 2>/dev/null)" && [ -n "$p" ]; then
-    case "$p" in /*)
-      printf '%s\n' "$p"
-      return
-      ;;
-    esac
-  fi
-  if [ "$DRY_RUN" = 1 ]; then
-    warn "mfp-mcp not found; using a placeholder path for the dry run."
-    printf '%s\n' "$MFP_HOME/.local/bin/mfp-mcp"
-    return
-  fi
-  die "mfp-mcp not found. Run scripts/install-mac.sh first."
-}
 
 # --- rendering ------------------------------------------------------------------
 render_mason() {
@@ -380,6 +356,7 @@ case "$cmd" in
   status) cmd_status ;;
   logs) cmd_logs "$@" ;;
   health) cmd_health "$@" ;;
+  auth) exec "$REPO_ROOT/bin/mfp-auth" "$@" ;;
   tunnel) cmd_tunnel "$@" ;;
   help) usage ;;
   *)

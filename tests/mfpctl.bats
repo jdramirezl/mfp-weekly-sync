@@ -81,6 +81,7 @@ plist_get() { plutil -extract "$2" raw -o - "$1"; }
 
 @test "install fails clearly when mfp-mcp is missing" {
   unset MFP_MCP_BIN
+  rm -f "$TEST_HOME/.local/bin/mfp-mcp"
   run "$MFPCTL" install
   [ "$status" -ne 0 ]
   [[ "$output" == *"Run scripts/install-mac.sh first"* ]]

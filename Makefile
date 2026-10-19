@@ -11,7 +11,7 @@ SHELLCHECK_ARCH := $(if $(filter arm64,$(shell uname -m)),aarch64,x86_64)
 BATS := $(TOOLS)/bats-core/bin/bats
 SHELLCHECK := $(TOOLS)/shellcheck
 
-SH_FILES := $(wildcard bin/mfpctl scripts/*.sh scripts/lib/*.sh scripts/dev/*.sh) tests/helpers.bash
+SH_FILES := $(wildcard bin/mfpctl bin/mfp-auth scripts/*.sh scripts/lib/*.sh scripts/dev/*.sh) tests/helpers.bash
 
 .PHONY: tools test lint verify clean-tools
 

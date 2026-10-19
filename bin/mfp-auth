@@ -1,0 +1,144 @@
+#!/bin/bash
+# mfp-auth: connect (or reconnect) Mason to MyFitnessPal from a piped cookie.
+#
+#   pbpaste | bin/mfp-auth [--username NAME] [--no-restart] [--dry-run]
+#
+# Copy the value of the __Secure-next-auth.session-token cookie from DevTools
+# first. Reads the cookie from stdin only. It never appears in argv, the
+# environment, output or logs. Pasting a long cookie into the hidden prompt of
+# `mfp-mcp auth` can hang the terminal, which is why this reads a pipe instead.
+set -euo pipefail
+
+REPO_ROOT="$(cd "$(dirname "$0")/.." && pwd)"
+# shellcheck source=../scripts/lib/common.sh
+. "$REPO_ROOT/scripts/lib/common.sh"
+
+usage() {
+  cat <<'EOF'
+Usage: pbpaste | bin/mfp-auth [--username NAME] [--no-restart] [--dry-run]
+
+Copy the value of the __Secure-next-auth.session-token cookie (DevTools ->
+Application -> Cookies -> https://www.myfitnesspal.com), then run:
+
+  pbpaste | bin/mfp-auth --username <your MFP username>
+
+  --username NAME  Your MyFitnessPal username (not email). Needed for SSO/email
+                   logins; defaults to MFP_USERNAME or ~/.config/mfp-mason/mason.env.
+  --no-restart     Don't restart the Mason service after a successful auth.
+  --dry-run        Validate the input and show what would run; change nothing.
+EOF
+}
+
+USERNAME_ARG=""
+RESTART=1
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --username)
+      [ $# -ge 2 ] || die "--username needs a value"
+      USERNAME_ARG="$2"
+      shift
+      ;;
+    --username=*) USERNAME_ARG="${1#--username=}" ;;
+    --no-restart) RESTART=0 ;;
+    --dry-run) DRY_RUN=1 ;;
+    -h | --help)
+      usage
+      exit 0
+      ;;
+    *)
+      usage >&2
+      die "unknown option: $1"
+      ;;
+  esac
+  shift
+done
+
+mfp_init_paths
+
+# A terminal on stdin means nothing was piped; reading it would wait forever.
+# MFP_AUTH_ASSUME_TTY lets the tests exercise this branch.
+if [ -t 0 ] || [ "${MFP_AUTH_ASSUME_TTY:-0}" = 1 ]; then
+  usage >&2
+  die "no cookie on stdin. Pipe it in: pbpaste | bin/mfp-auth"
+fi
+
+# `cat` reads everything, including a final line with no newline (pbpaste
+# sends none). Plain `read` returns 1 at EOF and kills a set -e script.
+raw="$(cat)"
+cookie="$(printf '%s' "$raw" | tr -d '\r\n')"
+unset raw
+case "$cookie" in [Cc][Oo][Oo][Kk][Ii][Ee]:*) cookie="${cookie#*:}" ;; esac
+# Trim surrounding whitespace.
+cookie="${cookie#"${cookie%%[![:space:]]*}"}"
+cookie="${cookie%"${cookie##*[![:space:]]}"}"
+[ -n "$cookie" ] || {
+  usage >&2
+  die "stdin was empty. Copy the cookie value first, then: pbpaste | bin/mfp-auth"
+}
+log "Input received (${#cookie} characters). Validating…"
+
+# Username: --username, then MFP_USERNAME / mason.env / Mason's saved session.
+if [ -n "$USERNAME_ARG" ]; then
+  USERNAME="$USERNAME_ARG"
+else
+  USERNAME="$(configured_username || true)"
+fi
+[ -n "$USERNAME" ] || warn "no MFP username configured. $USERNAME_HINT"
+
+BIN="$(resolve_mfp_mcp_bin)"
+load_mason_env # MFP_IMPERSONATE etc. Its MFP_USERNAME is superseded below.
+
+if [ "$DRY_RUN" = 1 ]; then
+  printf '+ <cookie on stdin> | MFP_USERNAME=%q MFP_MCP_DATA_DIR=%q %q auth\n' "$USERNAME" "$MFP_MCP_DATA_DIR" "$BIN"
+  printf '+ %q auth --check\n' "$BIN"
+  exit 0
+fi
+
+# Show only Mason's non-secret lines, and drop any line that contains the cookie.
+filter_output() {
+  local line
+  while IFS= read -r line || [ -n "$line" ]; do
+    case "$line" in *"$cookie"*) continue ;; esac
+    case "$line" in
+      'Connected as'* | 'Auto-refresh'* | 'Could not seed'* | 'Those cookies'* | \
+        'If this mentions'* | 'No cookie received'* | 'The server still works'* | \
+        'Traceback'* | *Error:*) printf '  %s\n' "$line" ;;
+    esac
+  done
+}
+
+rc=0
+out="$(printf '%s\n' "$cookie" |
+  MFP_USERNAME="$USERNAME" MFP_MCP_DATA_DIR="$MFP_MCP_DATA_DIR" "$BIN" auth 2>&1)" || rc=$?
+printf '%s\n' "$out" | filter_output >&2
+
+hints() {
+  printf '  Hints:\n' >&2
+  printf '  - %s\n' "$USERNAME_HINT" >&2
+  printf '  - 403 / Cloudflare: add MFP_IMPERSONATE=chrome124 to ~/.config/mfp-mason/mason.env\n' >&2
+  printf '  - Copy a fresh cookie: log out/in on myfitnesspal.com, then copy __Secure-next-auth.session-token again\n' >&2
+}
+
+if [ "$rc" -ne 0 ]; then
+  printf '❌ MyFitnessPal rejected the cookie (mfp-mcp auth exited %s).\n' "$rc" >&2
+  hints
+  exit 1
+fi
+
+check_rc=0
+check="$(MFP_USERNAME="$USERNAME" MFP_MCP_DATA_DIR="$MFP_MCP_DATA_DIR" "$BIN" auth --check 2>&1)" || check_rc=$?
+status_line="$(printf '%s\n' "$check" | sed -n 's/^Status:[[:space:]]*//p' | head -n 1)"
+refresh_line="$(printf '%s\n' "$check" | sed -n 's/^Auto-refresh:[[:space:]]*//p' | head -n 1)"
+if [ "$check_rc" -ne 0 ]; then
+  printf '❌ Saved, but the check failed: %s\n' "${status_line:-auth --check exited $check_rc}" >&2
+  hints
+  exit 1
+fi
+
+user="$(printf '%s' "$status_line" | sed -n 's/.*connected as //p')"
+printf '✅ Connected as %s; auto-refresh %s\n' "${user:-$USERNAME}" "${refresh_line:-unknown}"
+
+if [ "$RESTART" = 1 ] && launchctl print "gui/$(id -u)/$LABEL_MASON" >/dev/null 2>&1; then
+  launchctl kickstart -k "gui/$(id -u)/$LABEL_MASON"
+  log "restarted $LABEL_MASON so it uses the new session"
+fi

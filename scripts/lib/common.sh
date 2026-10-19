@@ -7,6 +7,12 @@
 # --- constants ------------------------------------------------------------
 MFP_MCP_VERSION="0.4.1"
 MFP_MCP_SPEC="mfp-mcp[autorefresh]==${MFP_MCP_VERSION}"
+# Python for the Mason tool env. 0.4.1 pins a pydantic-core that does not build
+# on Python 3.15, and Intel Homebrew has no bottles for newer Pythons.
+MASON_PYTHON="3.13"
+# Standalone uv installer, pinned (https://github.com/astral-sh/uv/releases).
+UV_VERSION="0.13.1"
+LABEL_REFRESH="com.jdrami.mfp-refresh"
 LABEL_MASON="com.jdrami.mfp-mcp"
 LABEL_HEALTH="com.jdrami.mfp-health"
 LABEL_TUNNEL="com.jdrami.mfp-tunnel"
@@ -23,6 +29,9 @@ mfp_init_paths() {
   # data dir to the default keeps `mfp-mcp auth` run from a terminal and the
   # launchd service pointed at the same session and browser profile.
   MFP_MCP_DATA_DIR="${MFP_MCP_DATA_DIR:-$MFP_HOME/Library/Application Support/myfitnesspal-mcp}"
+  # Mason keeps cookies.json in platformdirs.user_config_dir, which ignores
+  # MFP_MCP_DATA_DIR (same folder by default on macOS).
+  MFP_MCP_CONFIG_DIR="${MFP_MCP_CONFIG_DIR:-$MFP_HOME/Library/Application Support/myfitnesspal-mcp}"
   MFP_STATE_DIR="${MFP_STATE_DIR:-$MFP_HOME/Library/Application Support/mfp-mason}"
   MFP_CONFIG_DIR="${MFP_CONFIG_DIR:-$MFP_HOME/.config/mfp-mason}"
   MFP_LOG_DIR="${MFP_LOG_DIR:-$MFP_HOME/Library/Logs/mfp-mason}"
@@ -30,7 +39,7 @@ mfp_init_paths() {
   MFP_PORT="${MFP_PORT:-8484}"
   TUNNEL_HEALTH_ADDR="${TUNNEL_HEALTH_ADDR:-127.0.0.1:8080}"
   MFP_MCP_URL="http://${REQUIRED_HOST}:${MFP_PORT}/mcp"
-  export MFP_HOME LAUNCH_AGENTS_DIR MFP_MCP_DATA_DIR MFP_STATE_DIR MFP_CONFIG_DIR \
+  export MFP_HOME LAUNCH_AGENTS_DIR MFP_MCP_DATA_DIR MFP_MCP_CONFIG_DIR MFP_STATE_DIR MFP_CONFIG_DIR \
     MFP_LOG_DIR MFP_HOST MFP_PORT TUNNEL_HEALTH_ADDR MFP_MCP_URL
 }
 
@@ -67,6 +76,90 @@ require_loopback_host() {
 }
 
 file_mode() { stat -f %Lp "$1"; }
+
+have() { command -v "$1" >/dev/null 2>&1; }
+
+# --- binaries -------------------------------------------------------------------
+# resolve_mfp_mcp_bin : absolute path to Mason's mfp-mcp entry point.
+resolve_mfp_mcp_bin() {
+  local d p
+  if [ -n "${MFP_MCP_BIN:-}" ]; then
+    case "$MFP_MCP_BIN" in /*) ;; *) die "MFP_MCP_BIN must be an absolute path" ;; esac
+    printf '%s\n' "$MFP_MCP_BIN"
+    return
+  fi
+  if have uv && d="$(uv tool dir --bin 2>/dev/null)" && [ -x "$d/mfp-mcp" ]; then
+    printf '%s\n' "$d/mfp-mcp"
+    return
+  fi
+  if p="$(command -v mfp-mcp 2>/dev/null)" && [ -n "$p" ]; then
+    case "$p" in /*)
+      printf '%s\n' "$p"
+      return
+      ;;
+    esac
+  fi
+  if [ -x "$MFP_HOME/.local/bin/mfp-mcp" ]; then
+    printf '%s\n' "$MFP_HOME/.local/bin/mfp-mcp"
+    return
+  fi
+  if [ "$DRY_RUN" = 1 ]; then
+    warn "mfp-mcp not found; using a placeholder path for the dry run."
+    printf '%s\n' "$MFP_HOME/.local/bin/mfp-mcp"
+    return
+  fi
+  die "mfp-mcp not found. Run scripts/install-mac.sh first."
+}
+
+# resolve_tool_python : the Python inside Mason's uv tool environment.
+resolve_tool_python() {
+  local d
+  if [ -n "${MFP_TOOL_PY:-}" ]; then
+    printf '%s\n' "$MFP_TOOL_PY"
+    return
+  fi
+  if have uv && d="$(uv tool dir 2>/dev/null)" && [ -x "$d/mfp-mcp/bin/python" ]; then
+    printf '%s\n' "$d/mfp-mcp/bin/python"
+    return
+  fi
+  printf '%s\n' "$MFP_HOME/.local/share/uv/tools/mfp-mcp/bin/python"
+}
+
+# --- Mason session metadata (never prints secrets) ------------------------------
+mason_cookies_file() { printf '%s/cookies.json' "$MFP_MCP_CONFIG_DIR"; }
+
+# mason_saved_username : username persisted by a successful `mfp-mcp auth`.
+mason_saved_username() {
+  local f
+  f="$(mason_cookies_file)"
+  [ -f "$f" ] || return 1
+  plutil -extract username raw -o - "$f" 2>/dev/null
+}
+
+# session_token_hash : first 8 hex chars of sha256(session token), or "none".
+session_token_hash() {
+  local f tok
+  f="$(mason_cookies_file)"
+  if [ -f "$f" ] && tok="$(plutil -extract 'cookies.__Secure-next-auth\.session-token' raw -o - "$f" 2>/dev/null)" && [ -n "$tok" ]; then
+    printf '%s' "$tok" | shasum -a 256 | cut -c1-8
+  else
+    printf 'none\n'
+  fi
+}
+
+# configured_username : MFP_USERNAME from env, mason.env, or Mason's saved
+# session, in that order. Prints nothing and returns 1 if none.
+configured_username() {
+  local u="${MFP_USERNAME:-}"
+  if [ -z "$u" ] && [ -f "$MFP_CONFIG_DIR/mason.env" ]; then
+    u="$(load_env_file "$MFP_CONFIG_DIR/mason.env" MFP_USERNAME; printf '%s' "${MFP_USERNAME:-}")"
+  fi
+  [ -n "$u" ] || u="$(mason_saved_username 2>/dev/null || true)"
+  [ -n "$u" ] || return 1
+  printf '%s\n' "$u"
+}
+
+USERNAME_HINT="SSO/email MyFitnessPal logins need MFP_USERNAME (your MFP username, not email): put MFP_USERNAME=<name> in ~/.config/mfp-mason/mason.env (chmod 600), then run: bin/mfpctl restart"
 
 # --- env files --------------------------------------------------------------
 # load_env_file FILE KEY... : export only the listed keys from a KEY=VALUE

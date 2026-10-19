@@ -81,6 +81,29 @@ if [ "${1:-}" = auth ] && [ "${2:-}" = --check ]; then
   echo "Auto-refresh: ready (profile at /fake/browser-profile)"
   exit "$rc"
 fi
+if [ "${1:-}" = auth ]; then
+  # Interactive login: record what Mason would see, never echo the cookie.
+  cat >"$STUB_DIR/auth-stdin"
+  printf '%s' "${MFP_USERNAME:-}" >"$STUB_DIR/auth-username"
+  env >"$STUB_DIR/auth-env"
+  echo "Connect your MyFitnessPal account"
+  echo "(no terminal detected — reading the cookie from stdin)" >&2
+  echo "Validating with MyFitnessPal..."
+  rc="$(cat "$STUB_DIR/auth-login.rc" 2>/dev/null || echo 0)"
+  if [ "$rc" = 0 ]; then
+    echo "Connected as ${MFP_USERNAME:-fakeuser}. Cookies saved to /fake/cookies.json"
+    echo "Auto-refresh ready (profile at /fake/browser-profile)."
+  else
+    echo "Those cookies didn't authenticate: Authenticated, but couldn't read your MyFitnessPal profile." >&2
+  fi
+  exit "$rc"
+fi
+if [ "${1:-}" = --http ]; then
+  # Service mode: dump argv + env so tests can inspect what launchd would run.
+  printf '%s\n' "$*" >"$STUB_DIR/serve-argv"
+  env >"$STUB_DIR/serve-env"
+  exit 0
+fi
 exit 0
 EOF
   chmod +x "$dir/mfp-mcp"
