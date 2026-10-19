@@ -126,3 +126,60 @@ EOF
   [ "$status" -eq 0 ]
   ! grep -q '^mfp-mcp' "$STUB_LOG"
 }
+
+@test "--username writes MFP_USERNAME to a 0600 mason.env" {
+  stub_uv
+  run "$INSTALL" --username jdramirezl
+  [ "$status" -eq 0 ]
+  [ "$(cat "$MFP_CONFIG_DIR/mason.env")" = "MFP_USERNAME=jdramirezl" ]
+  [ "$(file_mode "$MFP_CONFIG_DIR/mason.env")" = 600 ]
+}
+
+@test "--username appends to an existing mason.env, keeping its lines" {
+  stub_uv
+  mkdir -p "$MFP_CONFIG_DIR"
+  printf 'MFP_IMPERSONATE=chrome124' >"$MFP_CONFIG_DIR/mason.env"
+  run "$INSTALL" --username jdr
+  [ "$status" -eq 0 ]
+  [ "$(cat "$MFP_CONFIG_DIR/mason.env")" = "$(printf 'MFP_IMPERSONATE=chrome124\nMFP_USERNAME=jdr')" ]
+}
+
+@test "an existing MFP_USERNAME is never overwritten" {
+  stub_uv
+  mkdir -p "$MFP_CONFIG_DIR"
+  printf 'MFP_USERNAME=keep\n' >"$MFP_CONFIG_DIR/mason.env"
+  run "$INSTALL" --username other
+  [ "$status" -eq 0 ]
+  [ "$(cat "$MFP_CONFIG_DIR/mason.env")" = "MFP_USERNAME=keep" ]
+  [[ "$output" == *"already set"* ]]
+}
+
+@test "an email is rejected as the username" {
+  stub_uv
+  run "$INSTALL" --username me@example.com
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"not your email"* ]]
+}
+
+@test "non-interactive run without a username warns and continues" {
+  stub_uv
+  run "$INSTALL" </dev/null
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"need MFP_USERNAME"* ]]
+  [ ! -e "$MFP_CONFIG_DIR/mason.env" ]
+}
+
+@test "interactive run prompts once for the username" {
+  stub_uv
+  run bash -c "printf 'promptuser\n' | MFP_INSTALL_ASSUME_TTY=1 '$INSTALL'"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"MyFitnessPal username (not email), Enter to skip"* ]]
+  [ "$(cat "$MFP_CONFIG_DIR/mason.env")" = "MFP_USERNAME=promptuser" ]
+}
+
+@test "--dry-run shows the username write without doing it" {
+  run "$INSTALL" --dry-run --username jdr
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"+ append MFP_USERNAME=jdr"* ]]
+  [ ! -e "$MFP_CONFIG_DIR" ]
+}

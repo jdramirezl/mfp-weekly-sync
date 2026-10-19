@@ -225,18 +225,6 @@ render_template() {
   printf '%s\n' "$content"
 }
 
-# env_entries KEY... : <key>/<string> plist lines for each KEY that is set.
-env_entries() {
-  local key val out=""
-  for key in "$@"; do
-    val="${!key:-}"
-    [ -n "$val" ] || continue
-    out="${out}
-    <key>${key}</key><string>$(xml_escape "$val")</string>"
-  done
-  printf '%s' "$out"
-}
-
 # --- MCP probe ----------------------------------------------------------------
 # mcp_initialize : POST an MCP initialize to Mason. On success prints
 # "NAME VERSION" and returns 0; returns 1 if unreachable or not MCP.

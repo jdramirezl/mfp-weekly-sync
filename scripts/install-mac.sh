@@ -2,7 +2,7 @@
 # Install Mason's MyFitnessPal MCP (mfp-mcp) and its dependencies on macOS.
 # Idempotent: safe to re-run. Never runs `mfp-mcp auth`; that step needs you.
 #
-# Usage: scripts/install-mac.sh [--dry-run] [--with-tunnel]
+# Usage: scripts/install-mac.sh [--dry-run] [--with-tunnel] [--username NAME]
 set -euo pipefail
 
 SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
@@ -11,18 +11,26 @@ REPO_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 
 WITH_TUNNEL=0
+USERNAME_ARG=""
 usage() {
   cat <<EOF
-Usage: $(basename "$0") [--dry-run] [--with-tunnel]
+Usage: $(basename "$0") [--dry-run] [--with-tunnel] [--username NAME]
 
   --dry-run      Print every command instead of running it; change nothing.
   --with-tunnel  Also install OpenAI's tunnel-client (for optional ChatGPT access).
+  --username N   Your MyFitnessPal username (not email); saved to mason.env.
+                 Required for SSO/email logins.
 EOF
 }
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
     --with-tunnel) WITH_TUNNEL=1 ;;
+    --username)
+      [ $# -ge 2 ] || die "--username needs a value"
+      USERNAME_ARG="$2"
+      shift
+      ;;
     -h | --help)
       usage
       exit 0
@@ -96,11 +104,45 @@ for f in $examples; do
   run chmod 600 "$MFP_CONFIG_DIR/$f"
 done
 
+# 6. MyFitnessPal username ------------------------------------------------------
+# MFP's profile endpoint 500s for SSO/email logins, and Mason then needs
+# MFP_USERNAME. Store it in mason.env (0600), which the service loads at start.
+MASON_ENV="$MFP_CONFIG_DIR/mason.env"
+existing=""
+if [ -f "$MASON_ENV" ]; then
+  existing="$(load_env_file "$MASON_ENV" MFP_USERNAME; printf '%s' "${MFP_USERNAME:-}")"
+fi
+if [ -n "$existing" ]; then
+  log "MFP_USERNAME already set in $MASON_ENV"
+else
+  name="$USERNAME_ARG"
+  if [ -z "$name" ] && { [ -t 0 ] || [ "${MFP_INSTALL_ASSUME_TTY:-0}" = 1 ]; }; then
+    printf 'MyFitnessPal username (not email), Enter to skip: ' >&2
+    IFS= read -r name || true
+  fi
+  if [ -n "$name" ]; then
+    case "$name" in *@* | *[!A-Za-z0-9_.-]*) die "'$name' doesn't look like an MFP username (not your email)" ;; esac
+    if [ "$DRY_RUN" = 1 ]; then
+      printf '+ append MFP_USERNAME=%s to %q (mode 600)\n' "$name" "$MASON_ENV"
+    else
+      mkdir -p "$MFP_CONFIG_DIR"
+      [ -f "$MASON_ENV" ] || (umask 077 && : >"$MASON_ENV")
+      # Keep existing lines; make sure the file ends with a newline first.
+      if [ -s "$MASON_ENV" ] && [ -n "$(tail -c 1 "$MASON_ENV")" ]; then printf '\n' >>"$MASON_ENV"; fi
+      printf 'MFP_USERNAME=%s\n' "$name" >>"$MASON_ENV"
+      chmod 600 "$MASON_ENV"
+      log "saved MFP_USERNAME to $MASON_ENV"
+    fi
+  elif ! mason_saved_username >/dev/null 2>&1; then
+    warn "$USERNAME_HINT"
+  fi
+fi
+
 cat <<EOF
 
 $( [ "$DRY_RUN" = 1 ] && echo "Dry run: nothing was changed." || echo "Install step done.") Next, in a normal Terminal window:
   0. If "mfp-mcp: command not found": uv tool update-shell, then open a new Terminal
-  1. mfp-mcp auth            # paste your __Secure-next-auth.session-token cookie
+  1. pbpaste | bin/mfp-auth  # after copying the __Secure-next-auth.session-token value
   2. mfp-mcp auth --check    # should say "Status: valid" and "Auto-refresh: ready"
   3. bin/mfpctl install      # start the launchd services
   4. cp "$MFP_CONFIG_DIR/alert.env.example" "$MFP_CONFIG_DIR/alert.env" && chmod 600 "$MFP_CONFIG_DIR/alert.env"

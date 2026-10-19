@@ -68,17 +68,16 @@ is_loaded() { launchctl print "$DOMAIN/$1" >/dev/null 2>&1; }
 render_mason() {
   local bin="$1"
   require_loopback_host
-  load_mason_env
-  # shellcheck disable=SC2086  # word-splitting the key list is intended
   render_template "$REPO_ROOT/launchd/$LABEL_MASON.plist.in" \
     "LABEL=$LABEL_MASON" \
+    "MASON_SCRIPT=$(xml_escape "$RUNTIME_BIN_DIR/mason-run.sh")" \
     "MFP_MCP_BIN=$(xml_escape "$bin")" \
     "MFP_PORT=$MFP_PORT" \
     "SERVICE_PATH=$(xml_escape "$SERVICE_PATH_BASE:$(dirname "$bin")")" \
     "MFP_MCP_DATA_DIR=$(xml_escape "$MFP_MCP_DATA_DIR")" \
+    "MFP_CONFIG_DIR=$(xml_escape "$MFP_CONFIG_DIR")" \
     "MFP_STATE_DIR=$(xml_escape "$MFP_STATE_DIR")" \
-    "MFP_LOG_DIR=$(xml_escape "$MFP_LOG_DIR")" \
-    "EXTRA_ENV=$(env_entries $MASON_ENV_KEYS)"
+    "MFP_LOG_DIR=$(xml_escape "$MFP_LOG_DIR")"
 }
 
 # --- launchd plumbing -------------------------------------------------------------
@@ -89,7 +88,7 @@ RUNTIME_BIN_DIR="$MFP_STATE_DIR/bin"
 install_runtime_scripts() {
   local f
   run mkdir -p "$RUNTIME_BIN_DIR/lib"
-  for f in health-check.sh tunnel-run.sh; do
+  for f in mason-run.sh health-check.sh tunnel-run.sh refresh-session.sh; do
     [ -f "$REPO_ROOT/scripts/$f" ] || continue
     run cp "$REPO_ROOT/scripts/$f" "$RUNTIME_BIN_DIR/$f"
     run chmod 755 "$RUNTIME_BIN_DIR/$f"
@@ -205,6 +204,10 @@ cmd_install() {
   install_runtime_scripts
   install_agent "$LABEL_MASON" "$content"
   install_agent "$LABEL_HEALTH" "$health"
+  if ! configured_username >/dev/null; then
+    warn "No MFP_USERNAME found in mason.env or Mason's saved session."
+    warn "$USERNAME_HINT"
+  fi
   [ "$DRY_RUN" = 1 ] || log "Mason is starting on $MFP_MCP_URL. Check with: mfpctl status"
 }
 

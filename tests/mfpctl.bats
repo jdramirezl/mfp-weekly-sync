@@ -22,18 +22,66 @@ plist_get() { plutil -extract "$2" raw -o - "$1"; }
   [ "$(file_mode "$MFP_LOG_DIR")" = 700 ]
 }
 
-@test "ProgramArguments are absolute and bound to 127.0.0.1:8484" {
+@test "plist runs the mason-run.sh wrapper with absolute paths" {
   "$MFPCTL" install
-  [ "$(plist_get "$MASON_PLIST" ProgramArguments.0)" = "$MFP_MCP_BIN" ]
-  [[ "$(plist_get "$MASON_PLIST" ProgramArguments.0)" == /* ]]
-  [ "$(plist_get "$MASON_PLIST" ProgramArguments.1)" = --http ]
-  [ "$(plist_get "$MASON_PLIST" ProgramArguments.3)" = 127.0.0.1 ]
-  [ "$(plist_get "$MASON_PLIST" ProgramArguments.5)" = 8484 ]
+  [ "$(plist_get "$MASON_PLIST" ProgramArguments.0)" = /bin/bash ]
+  [ "$(plist_get "$MASON_PLIST" ProgramArguments.1)" = "$MFP_STATE_DIR/bin/mason-run.sh" ]
+  [ -x "$MFP_STATE_DIR/bin/mason-run.sh" ]
+  [ "$(plist_get "$MASON_PLIST" EnvironmentVariables.MFP_MCP_BIN)" = "$MFP_MCP_BIN" ]
+  [ "$(plist_get "$MASON_PLIST" EnvironmentVariables.MFP_PORT)" = 8484 ]
+  [ "$(plist_get "$MASON_PLIST" EnvironmentVariables.MFP_CONFIG_DIR)" = "$MFP_CONFIG_DIR" ]
   [ "$(plist_get "$MASON_PLIST" KeepAlive)" = true ]
   [ "$(plist_get "$MASON_PLIST" RunAtLoad)" = true ]
   [ "$(plist_get "$MASON_PLIST" ThrottleInterval)" = 30 ]
   [ "$(plist_get "$MASON_PLIST" EnvironmentVariables.MFP_MCP_DATA_DIR)" = "$MFP_MCP_DATA_DIR" ]
   [[ "$(plist_get "$MASON_PLIST" StandardErrorPath)" == "$MFP_LOG_DIR/"* ]]
+}
+
+# Run the installed wrapper the way launchd would: only the plist's env.
+run_wrapper() {
+  env -i HOME="$HOME" PATH=/usr/bin:/bin:/usr/sbin:/sbin STUB_LOG="$STUB_LOG" STUB_DIR="$STUB_DIR" \
+    MFP_HOME_OVERRIDE="$TEST_HOME" MFP_MCP_BIN="$MFP_MCP_BIN" MFP_MCP_DATA_DIR="$MFP_MCP_DATA_DIR" \
+    MFP_CONFIG_DIR="$MFP_CONFIG_DIR" MFP_PORT=8484 "$@" /bin/bash "$MFP_STATE_DIR/bin/mason-run.sh"
+}
+
+@test "wrapper execs mfp-mcp --http on 127.0.0.1:8484" {
+  "$MFPCTL" install
+  run run_wrapper
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/serve-argv")" = "--http --host 127.0.0.1 --port 8484" ]
+  grep -qx "MFP_MCP_DATA_DIR=$MFP_MCP_DATA_DIR" "$STUB_DIR/serve-env"
+}
+
+@test "wrapper refuses a non-loopback host" {
+  "$MFPCTL" install
+  run run_wrapper MFP_HOST=0.0.0.0
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"must bind 127.0.0.1 only"* ]]
+  [ ! -e "$STUB_DIR/serve-argv" ]
+}
+
+@test "wrapper loads mason.env at start and ignores MFP_COOKIE" {
+  "$MFPCTL" install
+  mkdir -p "$MFP_CONFIG_DIR"
+  printf 'MFP_IMPERSONATE=chrome124\nMFP_USERNAME="jdramirezl"\nMFP_COOKIE=secret-cookie\n' >"$MFP_CONFIG_DIR/mason.env"
+  chmod 600 "$MFP_CONFIG_DIR/mason.env"
+  run run_wrapper
+  [ "$status" -eq 0 ]
+  grep -qx 'MFP_IMPERSONATE=chrome124' "$STUB_DIR/serve-env"
+  grep -qx 'MFP_USERNAME=jdramirezl' "$STUB_DIR/serve-env"
+  ! grep -q secret-cookie "$STUB_DIR/serve-env"
+  [[ "$output" != *"no MFP_USERNAME"* ]]
+}
+
+@test "wrapper warns about a loose mason.env and a missing username" {
+  "$MFPCTL" install
+  mkdir -p "$MFP_CONFIG_DIR"
+  printf 'MFP_IMPERSONATE=chrome124\n' >"$MFP_CONFIG_DIR/mason.env"
+  chmod 644 "$MFP_CONFIG_DIR/mason.env"
+  run run_wrapper
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"has mode 644"* ]]
+  [[ "$output" == *"no MFP_USERNAME"* ]]
 }
 
 @test "service PATH is minimal plus the mfp-mcp bin dir" {
@@ -53,21 +101,35 @@ plist_get() { plutil -extract "$2" raw -o - "$1"; }
   [ "$status" -ne 0 ]
 }
 
-@test "optional Mason env keys are absent unless configured" {
+@test "the plist never bakes in mason.env values" {
+  mkdir -p "$MFP_CONFIG_DIR"
+  printf 'MFP_IMPERSONATE=chrome124\nMFP_USERNAME=jdr\nMFP_COOKIE=secret-cookie\n' >"$MFP_CONFIG_DIR/mason.env"
   "$MFPCTL" install
-  run plist_get "$MASON_PLIST" EnvironmentVariables.MFP_IMPERSONATE
-  [ "$status" -ne 0 ]
   run plist_get "$MASON_PLIST" EnvironmentVariables.MFP_USERNAME
   [ "$status" -ne 0 ]
+  run plist_get "$MASON_PLIST" EnvironmentVariables.MFP_IMPERSONATE
+  [ "$status" -ne 0 ]
+  ! grep -q secret-cookie "$MASON_PLIST"
 }
 
-@test "mason.env values are rendered (and only allowed keys)" {
+@test "install warns when no username is configured anywhere" {
+  run "$MFPCTL" install
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"No MFP_USERNAME found"* ]]
+}
+
+@test "install is quiet about the username when mason.env has it" {
   mkdir -p "$MFP_CONFIG_DIR"
-  printf 'MFP_IMPERSONATE=chrome124\nMFP_USERNAME="a&b"\nMFP_COOKIE=secret-cookie\n' >"$MFP_CONFIG_DIR/mason.env"
-  "$MFPCTL" install
-  [ "$(plist_get "$MASON_PLIST" EnvironmentVariables.MFP_IMPERSONATE)" = chrome124 ]
-  [ "$(plist_get "$MASON_PLIST" EnvironmentVariables.MFP_USERNAME)" = 'a&b' ]
-  ! grep -q secret-cookie "$MASON_PLIST"
+  printf 'MFP_USERNAME=jdr\n' >"$MFP_CONFIG_DIR/mason.env"
+  run "$MFPCTL" install
+  [[ "$output" != *"No MFP_USERNAME found"* ]]
+}
+
+@test "install is quiet about the username when Mason saved one" {
+  mkdir -p "$TEST_HOME/Library/Application Support/myfitnesspal-mcp"
+  printf '{"cookies":{},"username":"jdr"}' >"$TEST_HOME/Library/Application Support/myfitnesspal-mcp/cookies.json"
+  run "$MFPCTL" install
+  [[ "$output" != *"No MFP_USERNAME found"* ]]
 }
 
 @test "reinstall boots out the loaded service before bootstrapping" {

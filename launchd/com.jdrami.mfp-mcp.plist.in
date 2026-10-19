@@ -1,25 +1,25 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <!-- Rendered by bin/mfpctl install. Do not edit the installed copy by hand. -->
-<!-- Mason has no authentication: the host is hard-wired to 127.0.0.1. -->
+<!-- mason-run.sh loads ~/.config/mfp-mason/mason.env at each start and execs
+     mfp-mcp hard-wired to 127.0.0.1: Mason has no authentication. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
   <string>@LABEL@</string>
   <key>ProgramArguments</key>
   <array>
-    <string>@MFP_MCP_BIN@</string>
-    <string>--http</string>
-    <string>--host</string>
-    <string>127.0.0.1</string>
-    <string>--port</string>
-    <string>@MFP_PORT@</string>
+    <string>/bin/bash</string>
+    <string>@MASON_SCRIPT@</string>
   </array>
   <key>EnvironmentVariables</key>
   <dict>
     <key>PATH</key><string>@SERVICE_PATH@</string>
+    <key>MFP_MCP_BIN</key><string>@MFP_MCP_BIN@</string>
     <key>MFP_MCP_DATA_DIR</key><string>@MFP_MCP_DATA_DIR@</string>
-    <key>FASTMCP_LOG_LEVEL</key><string>WARNING</string>@EXTRA_ENV@
+    <key>MFP_CONFIG_DIR</key><string>@MFP_CONFIG_DIR@</string>
+    <key>MFP_PORT</key><string>@MFP_PORT@</string>
+    <key>FASTMCP_LOG_LEVEL</key><string>WARNING</string>
   </dict>
   <key>WorkingDirectory</key>
   <string>@MFP_STATE_DIR@</string>
