@@ -46,7 +46,7 @@ Suggested mapping:
 | Anything else | `MFP_ERROR` | false |
 
 If the endpoint is down, the hub should keep working without the `fitness_*`
-tools and say so. The daily health check separately alerts you on Telegram.
+tools and say so. The 6-hourly health check separately alerts you on Telegram.
 
 ## v2 hooks (not built yet)
 

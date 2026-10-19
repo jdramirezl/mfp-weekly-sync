@@ -85,7 +85,7 @@ bin/mfpctl health
 Done when `health` prints `health: ok`. To test a real alert end to end, run
 `bin/mfpctl stop`, then `bin/mfpctl health` (you get 🔴), then
 `bin/mfpctl start`, wait about 10 s, and run `bin/mfpctl health` (you get 🟢).
-The check runs daily at 09:00 and at login.
+The check runs every 6 hours (03:00, 09:00, 15:00, 21:00) and at login.
 
 The bot token is stored in two places: assistant-hub's `.env` and
 `~/.config/mfp-mason/alert.env`. If you rotate it with @BotFather, update both.

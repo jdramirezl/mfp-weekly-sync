@@ -29,7 +29,7 @@ claude mcp add --transport http myfitnesspal http://127.0.0.1:8484/mcp
   saves it and retries the call.
 - `mfp-mcp auth --check` is read-only. It exits 0 and prints
   `Status: valid, connected as <user>` when the session works. It exits 1 with
-  `Session: none saved` or `Status: rejected (<error>)` otherwise. The daily
+  `Session: none saved` or `Status: rejected (<error>)` otherwise. The 6-hourly
   health check keys off exactly this.
 - The cookie is saved as `cookies.json` (mode 600) in
   `~/Library/Application Support/myfitnesspal-mcp/`. The diary cache

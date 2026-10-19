@@ -1,7 +1,7 @@
 #!/bin/bash
 # Daily health check for the Mason service. Sends a Telegram message ONLY when
 # the overall state changes (ok -> failing, failing -> different failure,
-# failing -> ok). Run by the com.jdrami.mfp-health LaunchAgent at 09:00 and at
+# failing -> ok). Run by the com.jdrami.mfp-health LaunchAgent every 6 h (03,09,15,21) and at
 # load, or on demand with `mfpctl health`.
 #
 # Checks:
@@ -11,7 +11,7 @@
 #             exit 1  "Session:      none saved"         (never authenticated)
 #             exit 1  "Status:       rejected (<error>)"  (expired / blocked)
 #           It is read-only (never prompts or rewrites the cookie) but does make
-#           one live request to MyFitnessPal, which is why this runs daily, not
+#           one live request to MyFitnessPal, which is why this runs every 6 h, not
 #           in a loop.
 #   tunnel  Only if the tunnel LaunchAgent is installed: tunnel-client's
 #           http://$TUNNEL_HEALTH_ADDR/readyz returns 200.

@@ -199,12 +199,17 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   [ "$(grep -c '^mfp-mcp' "$STUB_LOG")" = 1 ]
 }
 
-@test "health plist is lint-clean, daily at 09:00, with no KeepAlive" {
+@test "health plist is lint-clean, every 6 h incl. 09:00, with no KeepAlive" {
   "$REPO_ROOT/bin/mfpctl" install
   p="$LAUNCH_AGENTS_DIR/com.jdrami.mfp-health.plist"
   plutil -lint "$p"
-  [ "$(plutil -extract StartCalendarInterval.Hour raw -o - "$p")" = 9 ]
-  [ "$(plutil -extract StartCalendarInterval.Minute raw -o - "$p")" = 0 ]
+  [ "$(plutil -extract StartCalendarInterval raw -o - "$p")" = 4 ]
+  hours=""
+  for i in 0 1 2 3; do
+    hours="$hours $(plutil -extract "StartCalendarInterval.$i.Hour" raw -o - "$p")"
+    [ "$(plutil -extract "StartCalendarInterval.$i.Minute" raw -o - "$p")" = 0 ]
+  done
+  [ "$hours" = " 3 9 15 21" ]
   [ "$(plutil -extract RunAtLoad raw -o - "$p")" = true ]
   run plutil -extract KeepAlive raw -o - "$p"
   [ "$status" -ne 0 ]

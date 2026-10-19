@@ -12,7 +12,7 @@ usage() {
 Usage: mfpctl [--dry-run] <command> [args]
 
 Service commands:
-  install            Render and load the Mason service (and the daily health check).
+  install            Render and load the Mason service (plus health check and weekly refresh).
   uninstall          Unload and remove every mfp-mason LaunchAgent. Keeps your data.
   start              Load/start the Mason service.
   stop               Unload the Mason service (KeepAlive would restart a plain kill).

@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="UTF-8"?>
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-<!-- Rendered by bin/mfpctl install. Daily Mason health check: no KeepAlive, no polling. -->
+<!-- Rendered by bin/mfpctl install. Mason health check every 6 h: no KeepAlive, no polling. -->
 <plist version="1.0">
 <dict>
   <key>Label</key>
@@ -23,13 +23,14 @@
     <key>LAUNCH_AGENTS_DIR</key><string>@LAUNCH_AGENTS_DIR@</string>
     <key>MFP_PORT</key><string>@MFP_PORT@</string>
   </dict>
+  <!-- Every 6 hours (03, 09, 15, 21 local) plus at load. -->
   <key>StartCalendarInterval</key>
-  <dict>
-    <key>Hour</key>
-    <integer>9</integer>
-    <key>Minute</key>
-    <integer>0</integer>
-  </dict>
+  <array>
+    <dict><key>Hour</key><integer>3</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>9</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>15</integer><key>Minute</key><integer>0</integer></dict>
+    <dict><key>Hour</key><integer>21</integer><key>Minute</key><integer>0</integer></dict>
+  </array>
   <key>RunAtLoad</key>
   <true/>
   <key>StandardOutPath</key>

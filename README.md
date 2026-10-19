@@ -11,7 +11,7 @@ flowchart LR
     subgraph Mac[Mac · LaunchAgents]
       M[com.jdrami.mfp-mcp<br/>mfp-mcp --http 127.0.0.1:8484]
       T[com.jdrami.mfp-tunnel<br/>optional, off by default]
-      H[com.jdrami.mfp-health<br/>daily 09:00]
+      H[com.jdrami.mfp-health<br/>every 6 h]
       Hub[assistant-hub] -->|/mcp| M
       T -->|--mcp.server-url| M
       H -->|initialize + auth --check| M
@@ -51,7 +51,7 @@ Windows setup, is in [docs/mac-runbook.md](docs/mac-runbook.md).
 
 | Command | What it does |
 |---|---|
-| `mfpctl install` | Render, lint and load the Mason service and the daily health check |
+| `mfpctl install` | Render, lint and load the Mason service, the 6-hourly health check and the weekly session refresh |
 | `mfpctl uninstall` | Unload and remove every mfp-mason LaunchAgent; keeps data, session and logs |
 | `mfpctl start` / `stop` / `restart` | Load or kickstart / unload / restart Mason in place |
 | `mfpctl status` | launchd state of each agent plus a live MCP `initialize` probe |
@@ -64,7 +64,7 @@ Every mutating command accepts `--dry-run`, which prints the rendered plists and
 
 ## Health alerts
 
-`com.jdrami.mfp-health` runs at 09:00 and at login. It checks three things:
+`com.jdrami.mfp-health` runs every 6 hours (03:00, 09:00, 15:00, 21:00) and at login. It checks three things:
 
 - Mason answers MCP `initialize`.
 - `mfp-mcp auth --check` passes.
@@ -79,7 +79,7 @@ and how to fix it, and 🟢 says it recovered. Configure it in
 ```
 bin/mfpctl                    service control
 scripts/install-mac.sh        idempotent installer (--dry-run, --with-tunnel)
-scripts/health-check.sh       daily check + Telegram alert on state change
+scripts/health-check.sh       6-hourly check + Telegram alert on state change
 scripts/tunnel-run.sh         tunnel-client wrapper (reads tunnel.env)
 scripts/lib/common.sh         shared helpers (bash 3.2 compatible)
 launchd/*.plist.in            LaunchAgent templates
