@@ -87,6 +87,11 @@ Done when `health` prints `health: ok`. To test a real alert end to end, run
 `bin/mfpctl start`, wait about 10 s, and run `bin/mfpctl health` (you get 🟢).
 The check runs daily at 09:00 and at login.
 
+The bot token is stored in two places: assistant-hub's `.env` and
+`~/.config/mfp-mason/alert.env`. If you rotate it with @BotFather, update both.
+Otherwise the alerts stop arriving, and `bin/mfpctl health` reports
+`Telegram send failed`.
+
 ## 7. Optional: ChatGPT through the OpenAI tunnel
 
 1. In OpenAI Platform → **Tunnels**, create a tunnel and note its `tunnel_...` id.
