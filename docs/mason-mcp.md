@@ -27,6 +27,15 @@ claude mcp add --transport http myfitnesspal http://127.0.0.1:8484/mcp
   installer always includes, Mason boots a headless Chromium profile when
   MyFitnessPal rejects the session mid-call, lets the site rotate the token,
   saves it and retries the call.
+- Auto-refresh only keeps MFP's own NextAuth session sliding. It never redoes an
+  SSO, Google or Apple login. A session that has fully expired or was revoked
+  needs a fresh cookie: `pbpaste | bin/mfp-auth`.
+- Mason refreshes only reactively. This repo adds a weekly proactive refresh
+  (`com.jdrami.mfp-refresh`, `mfpctl refresh`). The details are in
+  [mac-runbook.md](mac-runbook.md#session-longevity-sso).
+- SSO/email accounts need `MFP_USERNAME` (your username, not your email),
+  because MFP's profile endpoint returns 500 for them. Set it in
+  `~/.config/mfp-mason/mason.env`.
 - `mfp-mcp auth --check` is read-only. It exits 0 and prints
   `Status: valid, connected as <user>` when the session works. It exits 1 with
   `Session: none saved` or `Status: rejected (<error>)` otherwise. The 6-hourly
@@ -75,11 +84,12 @@ hub enforces this with approvals.
 - **403 / Cloudflare blocked:** set `MFP_IMPERSONATE=chrome124` (or another
   `curl_cffi` target) in `~/.config/mfp-mason/mason.env`, then run
   `bin/mfpctl install`. Datacenter IPs are challenged far more than home ones.
-- **Session expired:** run `mfp-mcp auth --check`, then `mfp-mcp auth` with a
-  fresh cookie if auto-refresh didn't recover it.
+- **Session expired:** run `mfp-mcp auth --check`, then `bin/mfpctl refresh`.
+  If it's still rejected, use `pbpaste | bin/mfp-auth` with a fresh cookie.
 - **"couldn't read your MyFitnessPal profile":** set `MFP_USERNAME` to your
-  username (not email) in `mason.env`. MyFitnessPal's profile endpoint returns
-  500 for some accounts.
+  username (not email) in `mason.env`, then run `bin/mfpctl restart` and
+  `pbpaste | bin/mfp-auth`. MyFitnessPal's profile endpoint returns 500 for
+  SSO/email accounts.
 - **Meals:** `breakfast`/`lunch`/`dinner`/`snacks` fall back to your first
   through fourth meal if you renamed them. Any other unknown meal is an error,
   not a silent move.

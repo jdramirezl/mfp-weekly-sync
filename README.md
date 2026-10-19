@@ -12,9 +12,11 @@ flowchart LR
       M[com.jdrami.mfp-mcp<br/>mfp-mcp --http 127.0.0.1:8484]
       T[com.jdrami.mfp-tunnel<br/>optional, off by default]
       H[com.jdrami.mfp-health<br/>every 6 h]
+      R[com.jdrami.mfp-refresh<br/>weekly]
       Hub[assistant-hub] -->|/mcp| M
       T -->|--mcp.server-url| M
       H -->|initialize + auth --check| M
+      R -->|refresh_session| M
     end
     T <-->|outbound 443| ChatGPT
     H -->|only on state change| Telegram
@@ -37,11 +39,10 @@ write your diary. So:
 
 ```bash
 git clone <this repo> ~/code/mfp-mason && cd ~/code/mfp-mason
-scripts/install-mac.sh            # add --with-tunnel for ChatGPT access
-mfp-mcp auth                      # paste the __Secure-next-auth.session-token cookie
-mfp-mcp auth --check
+scripts/install-mac.sh --username <mfp username>   # add --with-tunnel for ChatGPT access
+pbpaste | bin/mfp-auth            # after copying the __Secure-next-auth.session-token value
 bin/mfpctl install
-bin/mfpctl status
+sleep 20 && bin/mfpctl status     # Mason takes ~10 s to start
 ```
 
 The full checklist, including Telegram alerts, the tunnel and retiring the old
@@ -57,6 +58,8 @@ Windows setup, is in [docs/mac-runbook.md](docs/mac-runbook.md).
 | `mfpctl status` | launchd state of each agent plus a live MCP `initialize` probe |
 | `mfpctl logs [-f]` | Show or follow `~/Library/Logs/mfp-mason/*.log` |
 | `mfpctl health [--simulate-fail mcp\|auth\|tunnel]` | Run the health check now |
+| `mfpctl auth [--username NAME]` | Re-authenticate from a piped cookie: `pbpaste \| mfpctl auth` (same as `bin/mfp-auth`) |
+| `mfpctl refresh` | Rotate the MFP session now (also runs weekly, Sunday 04:30) |
 | `mfpctl tunnel enable` / `disable` / `status` | Manage the optional ChatGPT tunnel |
 
 Every mutating command accepts `--dry-run`, which prints the rendered plists and
@@ -74,12 +77,24 @@ It messages Telegram only when the state changes: 🔴 names the failing check
 and how to fix it, and 🟢 says it recovered. Configure it in
 `~/.config/mfp-mason/alert.env`; see `config/alert.env.example`.
 
+## Session refresh
+
+Mason refreshes the MFP session only when a call is rejected, and only by
+sliding MFP's existing NextAuth session. It never redoes an SSO login.
+`com.jdrami.mfp-refresh` also rotates it proactively every Sunday at 04:30 so
+an idle session doesn't age out. A session that has fully expired or was
+revoked needs `pbpaste | bin/mfp-auth`. See
+[docs/mac-runbook.md](docs/mac-runbook.md#session-longevity-sso).
+
 ## Layout
 
 ```
 bin/mfpctl                    service control
-scripts/install-mac.sh        idempotent installer (--dry-run, --with-tunnel)
+bin/mfp-auth                  piped-cookie (re)authentication
+scripts/install-mac.sh        idempotent installer: standalone uv, Python 3.13 (--dry-run, --with-tunnel, --username)
+scripts/mason-run.sh          Mason entry point (loads mason.env, loopback only)
 scripts/health-check.sh       6-hourly check + Telegram alert on state change
+scripts/refresh-session.sh    weekly proactive session refresh
 scripts/tunnel-run.sh         tunnel-client wrapper (reads tunnel.env)
 scripts/lib/common.sh         shared helpers (bash 3.2 compatible)
 launchd/*.plist.in            LaunchAgent templates

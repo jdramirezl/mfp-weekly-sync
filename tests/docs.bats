@@ -39,7 +39,7 @@ doc_files() {
 @test "mfpctl help lists every command" {
   run "$REPO_ROOT/bin/mfpctl" --help
   [ "$status" -eq 0 ]
-  for c in install uninstall start stop restart status logs health "tunnel enable" "tunnel disable" "tunnel status"; do
+  for c in install uninstall start stop restart status logs health auth refresh "tunnel enable" "tunnel disable" "tunnel status"; do
     [[ "$output" == *"  $c"* ]] || false
   done
 }
