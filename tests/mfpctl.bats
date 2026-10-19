@@ -34,7 +34,7 @@ plist_get() { plutil -extract "$2" raw -o - "$1"; }
   [ "$(plist_get "$MASON_PLIST" RunAtLoad)" = true ]
   [ "$(plist_get "$MASON_PLIST" ThrottleInterval)" = 30 ]
   [ "$(plist_get "$MASON_PLIST" EnvironmentVariables.MFP_MCP_DATA_DIR)" = "$MFP_MCP_DATA_DIR" ]
-  [[ "$(plist_get "$MASON_PLIST" StandardErrorPath)" == "$MFP_LOG_DIR/"* ]]
+  [[ "$(plist_get "$MASON_PLIST" StandardErrorPath)" == "$MFP_LOG_DIR/"* ]] || false
 }
 
 # Run the installed wrapper the way launchd would: only the plist's env.
@@ -56,7 +56,7 @@ run_wrapper() {
   "$MFPCTL" install
   run run_wrapper MFP_HOST=0.0.0.0
   [ "$status" -ne 0 ]
-  [[ "$output" == *"must bind 127.0.0.1 only"* ]]
+  [[ "$output" == *"must bind 127.0.0.1 only"* ]] || false
   [ ! -e "$STUB_DIR/serve-argv" ]
 }
 
@@ -69,8 +69,8 @@ run_wrapper() {
   [ "$status" -eq 0 ]
   grep -qx 'MFP_IMPERSONATE=chrome124' "$STUB_DIR/serve-env"
   grep -qx 'MFP_USERNAME=jdramirezl' "$STUB_DIR/serve-env"
-  ! grep -q secret-cookie "$STUB_DIR/serve-env"
-  [[ "$output" != *"no MFP_USERNAME"* ]]
+  ! grep -q secret-cookie "$STUB_DIR/serve-env" || false
+  [[ "$output" != *"no MFP_USERNAME"* ]] || false
 }
 
 @test "wrapper warns about a loose mason.env and a missing username" {
@@ -80,8 +80,8 @@ run_wrapper() {
   chmod 644 "$MFP_CONFIG_DIR/mason.env"
   run run_wrapper
   [ "$status" -eq 0 ]
-  [[ "$output" == *"has mode 644"* ]]
-  [[ "$output" == *"no MFP_USERNAME"* ]]
+  [[ "$output" == *"has mode 644"* ]] || false
+  [[ "$output" == *"no MFP_USERNAME"* ]] || false
 }
 
 @test "service PATH is minimal plus the mfp-mcp bin dir" {
@@ -92,7 +92,7 @@ run_wrapper() {
 @test "refuses any host other than 127.0.0.1" {
   MFP_HOST=0.0.0.0 run "$MFPCTL" install
   [ "$status" -ne 0 ]
-  [[ "$output" == *"must bind 127.0.0.1 only"* ]]
+  [[ "$output" == *"must bind 127.0.0.1 only"* ]] || false
   [ ! -e "$MASON_PLIST" ]
 }
 
@@ -109,27 +109,27 @@ run_wrapper() {
   [ "$status" -ne 0 ]
   run plist_get "$MASON_PLIST" EnvironmentVariables.MFP_IMPERSONATE
   [ "$status" -ne 0 ]
-  ! grep -q secret-cookie "$MASON_PLIST"
+  ! grep -q secret-cookie "$MASON_PLIST" || false
 }
 
 @test "install warns when no username is configured anywhere" {
   run "$MFPCTL" install
   [ "$status" -eq 0 ]
-  [[ "$output" == *"No MFP_USERNAME found"* ]]
+  [[ "$output" == *"No MFP_USERNAME found"* ]] || false
 }
 
 @test "install is quiet about the username when mason.env has it" {
   mkdir -p "$MFP_CONFIG_DIR"
   printf 'MFP_USERNAME=jdr\n' >"$MFP_CONFIG_DIR/mason.env"
   run "$MFPCTL" install
-  [[ "$output" != *"No MFP_USERNAME found"* ]]
+  [[ "$output" != *"No MFP_USERNAME found"* ]] || false
 }
 
 @test "install is quiet about the username when Mason saved one" {
   mkdir -p "$TEST_HOME/Library/Application Support/myfitnesspal-mcp"
   printf '{"cookies":{},"username":"jdr"}' >"$TEST_HOME/Library/Application Support/myfitnesspal-mcp/cookies.json"
   run "$MFPCTL" install
-  [[ "$output" != *"No MFP_USERNAME found"* ]]
+  [[ "$output" != *"No MFP_USERNAME found"* ]] || false
 }
 
 @test "reinstall boots out the loaded service before bootstrapping" {
@@ -137,8 +137,8 @@ run_wrapper() {
   run "$MFPCTL" install
   [ "$status" -eq 0 ]
   run grep -n -E 'launchctl (bootout|bootstrap)' "$STUB_LOG"
-  [[ "${lines[0]}" == *"bootout gui/$(id -u)/com.jdrami.mfp-mcp" ]]
-  [[ "${lines[1]}" == *"bootstrap gui/$(id -u) $MASON_PLIST" ]]
+  [[ "${lines[0]}" == *"bootout gui/$(id -u)/com.jdrami.mfp-mcp" ]] || false
+  [[ "${lines[1]}" == *"bootstrap gui/$(id -u) $MASON_PLIST" ]] || false
 }
 
 @test "install fails clearly when mfp-mcp is missing" {
@@ -146,19 +146,19 @@ run_wrapper() {
   rm -f "$TEST_HOME/.local/bin/mfp-mcp"
   run "$MFPCTL" install
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Run scripts/install-mac.sh first"* ]]
+  [[ "$output" == *"Run scripts/install-mac.sh first"* ]] || false
 }
 
 @test "install --dry-run prints the plist and launchctl calls, writes nothing" {
   unset MFP_MCP_BIN
   run "$MFPCTL" install --dry-run
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--- would write $MASON_PLIST ---"* ]]
-  [[ "$output" == *"<string>127.0.0.1</string>"* ]]
-  [[ "$output" == *"+ launchctl bootstrap gui/"* ]]
+  [[ "$output" == *"--- would write $MASON_PLIST ---"* ]] || false
+  [[ "$output" == *"mason-run.sh</string>"* ]] || false
+  [[ "$output" == *"+ launchctl bootstrap gui/"* ]] || false
   [ ! -e "$LAUNCH_AGENTS_DIR" ]
   [ ! -e "$MFP_LOG_DIR" ]
-  ! grep -q '^launchctl boot' "$STUB_LOG"
+  ! grep -q '^launchctl boot' "$STUB_LOG" || false
 }
 
 @test "uninstall boots out and removes plists but keeps data" {
@@ -198,8 +198,8 @@ run_wrapper() {
   stub curl 0 $'event: message\ndata: {"jsonrpc":"2.0","id":1,"result":{"protocolVersion":"2025-06-18","serverInfo":{"name":"myfitnesspal","version":"1.20.0"}}}\n\n'
   run "$MFPCTL" status
   [ "$status" -eq 0 ]
-  [[ "$output" == *"com.jdrami.mfp-mcp"*"loaded (state=running, pid=4242)"* ]]
-  [[ "$output" == *"MCP http://127.0.0.1:8484/mcp: OK (myfitnesspal 1.20.0)"* ]]
+  [[ "$output" == *"com.jdrami.mfp-mcp"*"loaded (state=running, pid=4242)"* ]] || false
+  [[ "$output" == *"MCP http://127.0.0.1:8484/mcp: OK (myfitnesspal 1.20.0)"* ]] || false
   grep -q 'Accept: application/json, text/event-stream' "$STUB_LOG"
 }
 
@@ -207,19 +207,19 @@ run_wrapper() {
   stub curl 0 '{"jsonrpc":"2.0","id":1,"result":{"serverInfo":{"name":"myfitnesspal","version":"9"}}}'
   run "$MFPCTL" status
   [ "$status" -eq 0 ]
-  [[ "$output" == *"OK (myfitnesspal 9)"* ]]
+  [[ "$output" == *"OK (myfitnesspal 9)"* ]] || false
 }
 
 @test "status fails cleanly when Mason is unreachable" {
   stub curl 7 ''
   run "$MFPCTL" status
   [ "$status" -eq 1 ]
-  [[ "$output" == *"UNREACHABLE"* ]]
-  [[ "$output" == *"not installed"* ]]
+  [[ "$output" == *"UNREACHABLE"* ]] || false
+  [[ "$output" == *"not installed"* ]] || false
 }
 
 @test "unknown command fails with usage" {
   run "$MFPCTL" frobnicate
   [ "$status" -ne 0 ]
-  [[ "$output" == *"Usage: mfpctl"* ]]
+  [[ "$output" == *"Usage: mfpctl"* ]] || false
 }

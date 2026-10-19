@@ -15,8 +15,8 @@ setup() {
   run bash -c "printf '%s' '$COOKIE' | '$AUTH' --username jdr"
   [ "$status" -eq 0 ]
   [ "$(cat "$STUB_DIR/auth-stdin")" = "$COOKIE" ]
-  [[ "$output" == *"Input received (${#COOKIE} characters). Validating…"* ]]
-  [[ "$output" == *"✅ Connected as fakeuser; auto-refresh ready"* ]]
+  [[ "$output" == *"Input received (${#COOKIE} characters). Validating…"* ]] || false
+  [[ "$output" == *"✅ Connected as fakeuser; auto-refresh ready"* ]] || false
   grep -qx 'mfp-mcp auth' "$STUB_LOG"
   grep -qx 'mfp-mcp auth --check' "$STUB_LOG"
 }
@@ -24,30 +24,30 @@ setup() {
 @test "the cookie never appears in output, argv or the environment" {
   run bash -c "printf '%s' '$COOKIE' | '$AUTH' --username jdr"
   [ "$status" -eq 0 ]
-  [[ "$output" != *"SECRETCOOKIEVALUE"* ]]
-  ! grep -q SECRETCOOKIEVALUE "$STUB_LOG"
-  ! grep -q SECRETCOOKIEVALUE "$STUB_DIR/auth-env"
+  [[ "$output" != *"SECRETCOOKIEVALUE"* ]] || false
+  ! grep -q SECRETCOOKIEVALUE "$STUB_LOG" || false
+  ! grep -q SECRETCOOKIEVALUE "$STUB_DIR/auth-env" || false
 }
 
 @test "a Cookie: prefix, CRLF and surrounding spaces are stripped" {
   run bash -c "printf 'Cookie:  %s \r\n' '$COOKIE' | '$AUTH' --username jdr"
   [ "$status" -eq 0 ]
   [ "$(cat "$STUB_DIR/auth-stdin")" = "$COOKIE" ]
-  [[ "$output" == *"Input received (${#COOKIE} characters)"* ]]
+  [[ "$output" == *"Input received (${#COOKIE} characters)"* ]] || false
 }
 
 @test "empty input fails with the pbpaste hint" {
   run bash -c "printf '  \n' | '$AUTH'"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"pbpaste | bin/mfp-auth"* ]]
-  ! grep -q '^mfp-mcp' "$STUB_LOG"
+  [[ "$output" == *"pbpaste | bin/mfp-auth"* ]] || false
+  ! grep -q '^mfp-mcp' "$STUB_LOG" || false
 }
 
 @test "a terminal on stdin is refused instead of hanging" {
   MFP_AUTH_ASSUME_TTY=1 run bash -c "printf x | '$AUTH'"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"no cookie on stdin"* ]]
-  [[ "$output" == *"pbpaste | bin/mfp-auth"* ]]
+  [[ "$output" == *"no cookie on stdin"* ]] || false
+  [[ "$output" == *"pbpaste | bin/mfp-auth"* ]] || false
 }
 
 @test "--username reaches Mason as MFP_USERNAME" {
@@ -67,49 +67,49 @@ setup() {
 @test "missing username warns but still tries" {
   run bash -c "printf '%s' '$COOKIE' | '$AUTH'"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"need MFP_USERNAME"* ]]
+  [[ "$output" == *"need MFP_USERNAME"* ]] || false
 }
 
 @test "a rejected login exits 1 with the SSO and 403 hints" {
   echo 1 >"$STUB_DIR/auth-login.rc"
   run bash -c "printf '%s' '$COOKIE' | '$AUTH'"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"❌ MyFitnessPal rejected the cookie"* ]]
-  [[ "$output" == *"Those cookies didn't authenticate"* ]]
-  [[ "$output" == *"MFP_USERNAME"* ]]
-  [[ "$output" == *"chrome124"* ]]
-  ! grep -qx 'mfp-mcp auth --check' "$STUB_LOG"
+  [[ "$output" == *"❌ MyFitnessPal rejected the cookie"* ]] || false
+  [[ "$output" == *"Those cookies didn't authenticate"* ]] || false
+  [[ "$output" == *"MFP_USERNAME"* ]] || false
+  [[ "$output" == *"chrome124"* ]] || false
+  ! grep -qx 'mfp-mcp auth --check' "$STUB_LOG" || false
 }
 
 @test "a failing post-auth check exits 1" {
   echo 1 >"$STUB_DIR/auth.rc"
   run bash -c "printf '%s' '$COOKIE' | '$AUTH' --username jdr"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"❌ Saved, but the check failed: rejected"* ]]
+  [[ "$output" == *"❌ Saved, but the check failed: rejected"* ]] || false
 }
 
 @test "success restarts Mason only when it is loaded" {
   run bash -c "printf '%s' '$COOKIE' | '$AUTH' --username jdr"
-  ! grep -q 'launchctl kickstart' "$STUB_LOG"
+  ! grep -q 'launchctl kickstart' "$STUB_LOG" || false
   touch "$STUB_DIR/loaded-com.jdrami.mfp-mcp"
   run bash -c "printf '%s' '$COOKIE' | '$AUTH' --username jdr"
   grep -qx "launchctl kickstart -k gui/$(id -u)/com.jdrami.mfp-mcp" "$STUB_LOG"
   : >"$STUB_LOG"
   run bash -c "printf '%s' '$COOKIE' | '$AUTH' --username jdr --no-restart"
-  ! grep -q 'launchctl kickstart' "$STUB_LOG"
+  ! grep -q 'launchctl kickstart' "$STUB_LOG" || false
 }
 
 @test "--dry-run validates input but runs nothing" {
   run bash -c "printf '%s' '$COOKIE' | '$AUTH' --dry-run --username jdr"
   [ "$status" -eq 0 ]
-  [[ "$output" == *"<cookie on stdin> | MFP_USERNAME=jdr"* ]]
-  [[ "$output" != *"SECRETCOOKIEVALUE"* ]]
-  ! grep -q '^mfp-mcp' "$STUB_LOG"
+  [[ "$output" == *"<cookie on stdin> | MFP_USERNAME=jdr"* ]] || false
+  [[ "$output" != *"SECRETCOOKIEVALUE"* ]] || false
+  ! grep -q '^mfp-mcp' "$STUB_LOG" || false
 }
 
 @test "mfpctl auth pipes through end to end" {
   run bash -c "printf '%s' '$COOKIE' | '$REPO_ROOT/bin/mfpctl' auth --username jdr"
   [ "$status" -eq 0 ]
   [ "$(cat "$STUB_DIR/auth-stdin")" = "$COOKIE" ]
-  [[ "$output" == *"✅ Connected as"* ]]
+  [[ "$output" == *"✅ Connected as"* ]] || false
 }

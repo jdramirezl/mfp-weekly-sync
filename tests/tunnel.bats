@@ -31,13 +31,13 @@ write_tunnel_env() {
 @test "mfpctl install does not install the tunnel" {
   "$MFPCTL" install
   [ ! -e "$TUNNEL_PLIST" ]
-  ! grep -q mfp-tunnel "$STUB_LOG"
+  ! grep -q mfp-tunnel "$STUB_LOG" || false
 }
 
 @test "enable without tunnel.env fails clearly" {
   run "$MFPCTL" tunnel enable
   [ "$status" -ne 0 ]
-  [[ "$output" == *"missing $MFP_CONFIG_DIR/tunnel.env"* ]]
+  [[ "$output" == *"missing $MFP_CONFIG_DIR/tunnel.env"* ]] || false
   [ ! -e "$TUNNEL_PLIST" ]
 }
 
@@ -45,7 +45,7 @@ write_tunnel_env() {
   write_tunnel_env 644
   run "$MFPCTL" tunnel enable
   [ "$status" -ne 0 ]
-  [[ "$output" == *"mode 644"* ]]
+  [[ "$output" == *"mode 644"* ]] || false
   [ ! -e "$TUNNEL_PLIST" ]
 }
 
@@ -54,7 +54,7 @@ write_tunnel_env() {
   printf 'CONTROL_PLANE_TUNNEL_ID=%s\nCONTROL_PLANE_API_KEY=\n' "$TUNNEL_ID" >"$MFP_CONFIG_DIR/tunnel.env"
   run "$MFPCTL" tunnel enable
   [ "$status" -ne 0 ]
-  [[ "$output" == *"CONTROL_PLANE_API_KEY is empty"* ]]
+  [[ "$output" == *"CONTROL_PLANE_API_KEY is empty"* ]] || false
 }
 
 @test "enable fails clearly when tunnel-client is missing" {
@@ -62,7 +62,7 @@ write_tunnel_env() {
   unset TUNNEL_CLIENT_BIN
   run "$MFPCTL" tunnel enable
   [ "$status" -ne 0 ]
-  [[ "$output" == *"install-mac.sh --with-tunnel"* ]]
+  [[ "$output" == *"install-mac.sh --with-tunnel"* ]] || false
 }
 
 @test "enable renders a lint-clean, secret-free plist and bootstraps it" {
@@ -70,9 +70,9 @@ write_tunnel_env() {
   run "$MFPCTL" tunnel enable
   [ "$status" -eq 0 ]
   plutil -lint "$TUNNEL_PLIST"
-  ! grep -qF "$API_KEY" "$TUNNEL_PLIST"
-  ! grep -qF "$TUNNEL_ID" "$TUNNEL_PLIST"
-  ! grep -q CONTROL_PLANE "$TUNNEL_PLIST"
+  ! grep -qF "$API_KEY" "$TUNNEL_PLIST" || false
+  ! grep -qF "$TUNNEL_ID" "$TUNNEL_PLIST" || false
+  ! grep -q CONTROL_PLANE "$TUNNEL_PLIST" || false
   [ "$(plutil -extract KeepAlive raw -o - "$TUNNEL_PLIST")" = true ]
   [ "$(plutil -extract EnvironmentVariables.TUNNEL_HEALTH_ADDR raw -o - "$TUNNEL_PLIST")" = 127.0.0.1:8080 ]
   [ -x "$MFP_STATE_DIR/bin/tunnel-run.sh" ]
@@ -87,7 +87,7 @@ write_tunnel_env() {
     /bin/bash "$MFP_STATE_DIR/bin/tunnel-run.sh"
   [ "$status" -eq 0 ]
   grep -qx 'tunnel-client run --mcp.server-url http://127.0.0.1:8484/mcp --health.listen-addr 127.0.0.1:8080 --mcp.startup-wait-timeout 120s' "$STUB_LOG"
-  ! grep -qF "$API_KEY" "$STUB_LOG"
+  ! grep -qF "$API_KEY" "$STUB_LOG" || false
   [ "$(cat "$STUB_DIR/tunnel-env")" = "ENV $TUNNEL_ID $API_KEY" ]
 }
 
@@ -95,12 +95,12 @@ write_tunnel_env() {
   write_tunnel_env 644
   run /bin/bash "$REPO_ROOT/scripts/tunnel-run.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"mode 644"* ]]
+  [[ "$output" == *"mode 644"* ]] || false
   printf 'CONTROL_PLANE_TUNNEL_ID=nope\nCONTROL_PLANE_API_KEY=x\n' >"$MFP_CONFIG_DIR/tunnel.env"
   chmod 600 "$MFP_CONFIG_DIR/tunnel.env"
   run /bin/bash "$REPO_ROOT/scripts/tunnel-run.sh"
   [ "$status" -ne 0 ]
-  [[ "$output" == *"tunnel_"* ]]
+  [[ "$output" == *"tunnel_"* ]] || false
   [ ! -e "$STUB_DIR/tunnel-env" ]
 }
 
@@ -118,9 +118,9 @@ write_tunnel_env() {
   write_tunnel_env
   run "$MFPCTL" tunnel enable --dry-run
   [ "$status" -eq 0 ]
-  [[ "$output" == *"--- would write $TUNNEL_PLIST ---"* ]]
-  [[ "$output" == *"+ launchctl bootstrap gui/"* ]]
-  [[ "$output" != *"$API_KEY"* ]]
+  [[ "$output" == *"--- would write $TUNNEL_PLIST ---"* ]] || false
+  [[ "$output" == *"+ launchctl bootstrap gui/"* ]] || false
+  [[ "$output" != *"$API_KEY"* ]] || false
   [ ! -e "$TUNNEL_PLIST" ]
 }
 
@@ -128,7 +128,7 @@ write_tunnel_env() {
   stub curl 0 ''
   run "$MFPCTL" tunnel status
   [ "$status" -eq 0 ]
-  [[ "$output" == *"/readyz: ready"* ]]
+  [[ "$output" == *"/readyz: ready"* ]] || false
   stub curl 22 ''
   run "$MFPCTL" tunnel status
   [ "$status" -eq 1 ]

@@ -83,7 +83,7 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   run "$HEALTH"
   [ "$status" -eq 1 ]
   [ "$(sends)" = 0 ]
-  [[ "$output" == *"no alert sent"* ]]
+  [[ "$output" == *"no alert sent"* ]] || false
 }
 
 @test "fail -> different fail alerts again" {
@@ -122,7 +122,7 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   run "$HEALTH"
   [ "$(sends)" = 1 ]
   [ "$(cat "$STATE")" = ok ]
-  [[ "$output" == *"next run retries"* ]]
+  [[ "$output" == *"next run retries"* ]] || false
 }
 
 @test "the bot token never appears in argv, output or logs" {
@@ -133,10 +133,10 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   [ "$(sends)" = 1 ]
   # It does reach curl, but only through the stdin config.
   grep -q "^url = \"https://api.telegram.org/bot$TOKEN/sendMessage\"$" "$SENT"
-  ! grep -qF "$TOKEN" "$STUB_LOG"
-  ! grep -F "ARG" "$SENT" | grep -qF "$TOKEN"
-  [[ "$output" != *"$TOKEN"* ]]
-  ! grep -rqF "$TOKEN" "$MFP_LOG_DIR"
+  ! grep -qF "$TOKEN" "$STUB_LOG" || false
+  ! grep -F "ARG" "$SENT" | grep -qF "$TOKEN" || false
+  [[ "$output" != *"$TOKEN"* ]] || false
+  ! grep -rqF "$TOKEN" "$MFP_LOG_DIR" || false
 }
 
 @test "missing alert.env warns, exits 0 when healthy, and keeps retrying" {
@@ -145,7 +145,7 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   echo 1 >"$STUB_DIR/auth.rc"
   run "$HEALTH"
   [ "$status" -eq 1 ]
-  [[ "$output" == *"alerts are not configured"* ]]
+  [[ "$output" == *"alerts are not configured"* ]] || false
   [ "$(cat "$STATE")" = ok ]
 }
 
@@ -156,7 +156,7 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   echo 1 >"$STUB_DIR/auth.rc"
   run "$HEALTH"
   [ "$(sends)" = 0 ]
-  [[ "$output" == *"missing or malformed"* ]]
+  [[ "$output" == *"missing or malformed"* ]] || false
 }
 
 @test "loose alert.env permissions produce a warning" {
@@ -165,7 +165,7 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   echo ok >"$STATE"
   echo 1 >"$STUB_DIR/auth.rc"
   run "$HEALTH"
-  [[ "$output" == *"has mode 644"* ]]
+  [[ "$output" == *"has mode 644"* ]] || false
 }
 
 @test "tunnel check runs only when the tunnel plist exists" {
@@ -173,7 +173,7 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   echo 7 >"$STUB_DIR/readyz.rc"
   run "$HEALTH"
   [ "$status" -eq 0 ]
-  ! grep -q readyz "$STUB_LOG"
+  ! grep -q readyz "$STUB_LOG" || false
   mkdir -p "$LAUNCH_AGENTS_DIR" && touch "$LAUNCH_AGENTS_DIR/com.jdrami.mfp-tunnel.plist"
   run "$HEALTH"
   [ "$status" -eq 1 ]
@@ -185,9 +185,9 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   alerts_configured
   run "$HEALTH" --dry-run --simulate-fail auth
   [ "$status" -eq 1 ]
-  [[ "$output" == *"would send this Telegram message"* ]]
-  [[ "$output" == *"🔴 MFP Mason unhealthy"* ]]
-  [[ "$output" == *"auth: simulated failure"* ]]
+  [[ "$output" == *"would send this Telegram message"* ]] || false
+  [[ "$output" == *"🔴 MFP Mason unhealthy"* ]] || false
+  [[ "$output" == *"auth: simulated failure"* ]] || false
   [ "$(sends)" = 0 ]
   [ ! -e "$STATE" ]
   [ ! -e "$MFP_LOG_DIR/health.log" ]
@@ -219,12 +219,12 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   "$REPO_ROOT/bin/mfpctl" install
   run /bin/bash "$MFP_STATE_DIR/bin/health-check.sh"
   [ "$status" -eq 0 ]
-  [[ "$output" == "health: ok"* ]]
+  [[ "$output" == "health: ok"* ]] || false
 }
 
 @test "mfpctl health forwards flags to the script" {
   run "$REPO_ROOT/bin/mfpctl" health --simulate-fail mcp --dry-run
   [ "$status" -eq 1 ]
-  [[ "$output" == *"mcp: simulated failure"* ]]
-  [[ "$output" == *"would send"* ]]
+  [[ "$output" == *"mcp: simulated failure"* ]] || false
+  [[ "$output" == *"would send"* ]] || false
 }

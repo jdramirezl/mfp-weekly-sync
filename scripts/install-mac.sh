@@ -46,43 +46,70 @@ done
 require_darwin
 mfp_init_paths
 
-have() { command -v "$1" >/dev/null 2>&1; }
-
-# 1. Homebrew packages ---------------------------------------------------------
-if ! have brew; then
-  die "Homebrew is required. Install it from https://brew.sh, then re-run."
-fi
+# 1. uv, standalone -------------------------------------------------------------
+# Not Homebrew: on Intel Macs Homebrew has no bottles for uv's toolchain and
+# built LLVM, Rust and Python from source for hours before stalling. The
+# official installer is pinned to UV_VERSION and downloaded to a file first
+# (no curl | sh). It installs into ~/.local/bin, next to mfp-mcp.
+export HOMEBREW_NO_AUTO_UPDATE=1
+UV_BIN_DIR="$MFP_HOME/.local/bin"
 if have uv; then
-  log "uv already installed"
+  UV="$(command -v uv)"
+  log "uv already installed ($UV)"
+elif [ -x "$UV_BIN_DIR/uv" ]; then
+  UV="$UV_BIN_DIR/uv"
+  log "uv already installed ($UV)"
 else
-  run brew install uv
-fi
-if [ "$WITH_TUNNEL" = 1 ]; then
-  if have tunnel-client; then
-    log "tunnel-client already installed"
+  UV="$UV_BIN_DIR/uv"
+  uv_url="https://astral.sh/uv/${UV_VERSION}/install.sh"
+  if [ "$DRY_RUN" = 1 ]; then
+    uv_tmp="${TMPDIR:-/tmp}/uv-install.XXXXXX"
   else
-    run brew install openai/tools/tunnel-client
+    uv_tmp="$(mktemp "${TMPDIR:-/tmp}/uv-install.XXXXXX")"
+    trap 'rm -f "$uv_tmp"' EXIT
+  fi
+  run curl -fsSL --proto '=https' --tlsv1.2 -o "$uv_tmp" "$uv_url"
+  run env UV_INSTALL_DIR="$UV_BIN_DIR" sh "$uv_tmp"
+  if [ "$DRY_RUN" != 1 ] && [ ! -x "$UV" ]; then
+    die "uv installer finished but $UV is missing"
   fi
 fi
 
-# 2. Mason, pinned, with the autorefresh extra ---------------------------------
-uv_tool_dir() {
-  if have uv; then uv tool dir 2>/dev/null && return 0; fi
-  printf '%s\n' "$MFP_HOME/.local/share/uv/tools"
-}
-TOOL_PY="$(uv_tool_dir)/mfp-mcp/bin/python"
+# Homebrew is only needed for the optional tunnel.
+if [ "$WITH_TUNNEL" = 1 ]; then
+  if have tunnel-client; then
+    log "tunnel-client already installed"
+  elif ! have brew; then
+    die "--with-tunnel needs Homebrew (https://brew.sh) for openai/tools/tunnel-client."
+  else
+    run env HOMEBREW_NO_AUTO_UPDATE=1 brew install openai/tools/tunnel-client
+  fi
+fi
+
+# 2. Python 3.13 + Mason, pinned, with the autorefresh extra ---------------------
+# Always pin the tool's Python: mfp-mcp 0.4.1 pins a pydantic-core that does
+# not build on Python 3.15, which uv would otherwise pick when it is newest.
+run "$UV" python install "$MASON_PYTHON"
+
+TOOL_DIR=""
+[ -x "$UV" ] && TOOL_DIR="$("$UV" tool dir 2>/dev/null || true)"
+[ -n "$TOOL_DIR" ] || TOOL_DIR="$MFP_HOME/.local/share/uv/tools"
+TOOL_PY="$TOOL_DIR/mfp-mcp/bin/python"
 
 mason_installed() {
-  have uv || return 1
-  uv tool list 2>/dev/null | grep -Eq "^mfp-mcp v${MFP_MCP_VERSION}( |\$)" || return 1
+  [ -x "$UV" ] || return 1
+  "$UV" tool list 2>/dev/null | grep -Eq "^mfp-mcp v${MFP_MCP_VERSION}( |\$)" || return 1
+  [ -x "$TOOL_PY" ] || return 1
+  # Built on the pinned Python (an earlier install may have used 3.15).
+  "$TOOL_PY" -c "import sys; raise SystemExit(sys.version_info[:2] != tuple(int(x) for x in '$MASON_PYTHON'.split('.')))" >/dev/null 2>&1 || return 1
   # The autorefresh extra brings Playwright into the tool's own environment.
-  [ -x "$TOOL_PY" ] && "$TOOL_PY" -c 'import playwright' >/dev/null 2>&1
+  "$TOOL_PY" -c 'import playwright' >/dev/null 2>&1
 }
 
 if mason_installed; then
-  log "mfp-mcp ${MFP_MCP_VERSION} (autorefresh) already installed"
+  log "mfp-mcp ${MFP_MCP_VERSION} (autorefresh, Python ${MASON_PYTHON}) already installed"
 else
-  run uv tool install --force "$MFP_MCP_SPEC"
+  run "$UV" tool install --force --python "$MASON_PYTHON" "$MFP_MCP_SPEC"
 fi
 
 # 3. Headless Chromium for session auto-refresh. Use the tool's own Python so
