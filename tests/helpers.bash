@@ -45,6 +45,14 @@ if [ "$name" = launchctl ] && [ "\${1:-}" = print ]; then
   [ -e "\$STUB_DIR/loaded-\${2##*/}" ] && { cat "\$STUB_DIR/$name.out"; exit 0; }
   exit 1
 fi
+# launchctl state: bootstrap marks a label loaded, bootout unloads it.
+if [ "$name" = launchctl ] && [ "\${1:-}" = bootstrap ]; then
+  [ -e "\$STUB_DIR/launchctl-bootstrap-fails" ] && exit 5
+  b="\${3##*/}"; touch "\$STUB_DIR/loaded-\${b%.plist}"
+fi
+if [ "$name" = launchctl ] && [ "\${1:-}" = bootout ]; then
+  rm -f "\$STUB_DIR/loaded-\${2##*/}"
+fi
 cat "\$STUB_DIR/$name.out"
 exit $rc
 EOF

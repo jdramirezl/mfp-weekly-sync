@@ -23,6 +23,7 @@ Service commands:
 Session:
   auth [--username NAME]
                      Re-authenticate from a piped cookie: pbpaste | mfpctl auth
+  refresh            Rotate the MFP session now (runs weekly, Sunday 04:30).
 
 Health:
   health [--simulate-fail mcp|auth|tunnel] [--wait SECONDS]
@@ -111,6 +112,22 @@ render_health() {
     "LAUNCH_AGENTS_DIR=$(xml_escape "$LAUNCH_AGENTS_DIR")" \
     "MFP_PORT=$MFP_PORT"
 }
+render_refresh() {
+  local bin="$1"
+  render_template "$REPO_ROOT/launchd/$LABEL_REFRESH.plist.in" \
+    "LABEL=$LABEL_REFRESH" \
+    "REFRESH_SCRIPT=$(xml_escape "$RUNTIME_BIN_DIR/refresh-session.sh")" \
+    "SERVICE_PATH=$(xml_escape "$SERVICE_PATH_BASE:$(dirname "$bin")")" \
+    "MFP_MCP_BIN=$(xml_escape "$bin")" \
+    "MFP_TOOL_PY=$(xml_escape "$(resolve_tool_python)")" \
+    "MFP_MCP_DATA_DIR=$(xml_escape "$MFP_MCP_DATA_DIR")" \
+    "MFP_STATE_DIR=$(xml_escape "$MFP_STATE_DIR")" \
+    "MFP_CONFIG_DIR=$(xml_escape "$MFP_CONFIG_DIR")" \
+    "MFP_LOG_DIR=$(xml_escape "$MFP_LOG_DIR")" \
+    "LAUNCH_AGENTS_DIR=$(xml_escape "$LAUNCH_AGENTS_DIR")" \
+    "MFP_PORT=$MFP_PORT"
+}
+
 ensure_dirs() {
   local d
   for d in "$MFP_STATE_DIR" "$MFP_LOG_DIR"; do
@@ -195,15 +212,17 @@ agent_summary() {
 
 # --- commands -----------------------------------------------------------------------
 cmd_install() {
-  local bin content health
+  local bin content health refresh
   require_loopback_host
   bin="$(resolve_mfp_mcp_bin)"
   content="$(render_mason "$bin")"
   health="$(render_health "$bin")"
+  refresh="$(render_refresh "$bin")"
   ensure_dirs
   install_runtime_scripts
   install_agent "$LABEL_MASON" "$content"
   install_agent "$LABEL_HEALTH" "$health"
+  install_agent "$LABEL_REFRESH" "$refresh"
   if ! configured_username >/dev/null; then
     warn "No MFP_USERNAME found in mason.env or Mason's saved session."
     warn "$USERNAME_HINT"
@@ -213,7 +232,7 @@ cmd_install() {
 
 cmd_uninstall() {
   local label
-  for label in "$LABEL_TUNNEL" "$LABEL_HEALTH" "$LABEL_MASON"; do
+  for label in "$LABEL_TUNNEL" "$LABEL_REFRESH" "$LABEL_HEALTH" "$LABEL_MASON"; do
     remove_agent "$label"
   done
   log "Removed LaunchAgents. Mason data, session and logs were left in place."
@@ -244,7 +263,7 @@ cmd_restart() {
 
 cmd_status() {
   local label server rc=0
-  for label in "$LABEL_MASON" "$LABEL_HEALTH" "$LABEL_TUNNEL"; do
+  for label in "$LABEL_MASON" "$LABEL_HEALTH" "$LABEL_REFRESH" "$LABEL_TUNNEL"; do
     agent_summary "$label"
   done
   if server="$(mcp_initialize)"; then
@@ -273,6 +292,14 @@ cmd_health() {
     export MFP_MCP_BIN="$bin"
   fi
   exec /bin/bash "$REPO_ROOT/scripts/health-check.sh" "$@"
+}
+
+cmd_refresh() {
+  local bin
+  if [ -z "${MFP_MCP_BIN:-}" ] && bin="$(DRY_RUN=0 resolve_mfp_mcp_bin 2>/dev/null)"; then
+    export MFP_MCP_BIN="$bin"
+  fi
+  exec /bin/bash "$REPO_ROOT/scripts/refresh-session.sh" "$@"
 }
 
 # --- optional tunnel ---------------------------------------------------------------
@@ -359,6 +386,7 @@ case "$cmd" in
   status) cmd_status ;;
   logs) cmd_logs "$@" ;;
   health) cmd_health "$@" ;;
+  refresh) cmd_refresh "$@" ;;
   auth) exec "$REPO_ROOT/bin/mfp-auth" "$@" ;;
   tunnel) cmd_tunnel "$@" ;;
   help) usage ;;

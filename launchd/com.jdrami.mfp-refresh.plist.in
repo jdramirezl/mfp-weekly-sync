@@ -1,0 +1,40 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<!-- Rendered by bin/mfpctl install. Weekly proactive MFP session refresh
+     (Sunday 04:30 local). No RunAtLoad, no KeepAlive. -->
+<plist version="1.0">
+<dict>
+  <key>Label</key>
+  <string>@LABEL@</string>
+  <key>ProgramArguments</key>
+  <array>
+    <string>/bin/bash</string>
+    <string>@REFRESH_SCRIPT@</string>
+  </array>
+  <key>EnvironmentVariables</key>
+  <dict>
+    <key>PATH</key><string>@SERVICE_PATH@</string>
+    <key>MFP_MCP_BIN</key><string>@MFP_MCP_BIN@</string>
+    <key>MFP_TOOL_PY</key><string>@MFP_TOOL_PY@</string>
+    <key>MFP_MCP_DATA_DIR</key><string>@MFP_MCP_DATA_DIR@</string>
+    <key>MFP_STATE_DIR</key><string>@MFP_STATE_DIR@</string>
+    <key>MFP_CONFIG_DIR</key><string>@MFP_CONFIG_DIR@</string>
+    <key>MFP_LOG_DIR</key><string>@MFP_LOG_DIR@</string>
+    <key>LAUNCH_AGENTS_DIR</key><string>@LAUNCH_AGENTS_DIR@</string>
+    <key>MFP_PORT</key><string>@MFP_PORT@</string>
+  </dict>
+  <key>StartCalendarInterval</key>
+  <dict>
+    <key>Weekday</key>
+    <integer>0</integer>
+    <key>Hour</key>
+    <integer>4</integer>
+    <key>Minute</key>
+    <integer>30</integer>
+  </dict>
+  <key>StandardOutPath</key>
+  <string>@MFP_LOG_DIR@/refresh.out.log</string>
+  <key>StandardErrorPath</key>
+  <string>@MFP_LOG_DIR@/refresh.err.log</string>
+</dict>
+</plist>

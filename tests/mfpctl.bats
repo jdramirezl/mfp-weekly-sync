@@ -174,6 +174,7 @@ run_wrapper() {
 
 @test "start bootstraps when unloaded, kickstarts when loaded" {
   "$MFPCTL" install
+  rm -f "$STUB_DIR/loaded-com.jdrami.mfp-mcp"
   : >"$STUB_LOG"
   "$MFPCTL" start
   grep -q "launchctl bootstrap gui/" "$STUB_LOG"
