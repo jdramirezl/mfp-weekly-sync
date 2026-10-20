@@ -16,6 +16,24 @@ setup() {
   export SENT
   write_curl_stub
   healthy
+  # Healing steps are stubs: each records its call and can "fix" auth.
+  export MFP_HEAL_MCP_WAIT=0
+  export MFP_REFRESH_SCRIPT="$STUB_DIR/refresh-stub.sh" MFP_LOGIN_SCRIPT="$STUB_DIR/login-stub.sh"
+  for step in refresh login; do
+    cat >"$STUB_DIR/$step-stub.sh" <<EOF
+#!/bin/bash
+echo "heal-$step \$*" >>"\$STUB_LOG"
+[ -e "\$STUB_DIR/$step-fixes" ] && echo 0 >"\$STUB_DIR/auth.rc"
+exit 0
+EOF
+  done
+  stub_security
+}
+
+password_login_configured() {
+  mkdir -p "$MFP_CONFIG_DIR"
+  printf 'MFP_LOGIN_EMAIL=you@example.com\n' >"$MFP_CONFIG_DIR/mason.env"
+  chmod 600 "$MFP_CONFIG_DIR/mason.env"
 }
 
 # curl stub: routes on the URL / -K flag.
@@ -71,7 +89,7 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   [ "$(sends)" = 1 ]
   grep -q '^ARG text=🔴 MFP Mason unhealthy' "$SENT"
   grep -q 'auth: Status: rejected (MyfitnesspalLoginError: expired)' "$SENT"
-  grep -q 'mfp-mcp auth' "$SENT"
+  grep -q 'mfpctl login' "$SENT"
   grep -q '^ARG chat_id=42$' "$SENT"
   [ "$(cat "$STATE")" = fail:auth ]
 }
@@ -232,4 +250,90 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   [ "$status" -eq 1 ]
   [[ "$output" == *"mcp: simulated failure"* ]] || false
   [[ "$output" == *"would send"* ]] || false
+}
+
+@test "heal: refresh fixes auth -> no alert, login not tried" {
+  alerts_configured
+  password_login_configured
+  echo ok >"$STATE"
+  echo 1 >"$STUB_DIR/auth.rc"
+  touch "$STUB_DIR/refresh-fixes"
+  run "$HEALTH"
+  [ "$status" -eq 0 ]
+  [ "$(sends)" = 0 ]
+  grep -qx 'heal-refresh --no-health' "$STUB_LOG"
+  ! grep -q heal-login "$STUB_LOG" || false
+  grep -q 'healed by refresh' "$MFP_LOG_DIR/health.log"
+  [ "$(cat "$STATE")" = ok ]
+}
+
+@test "heal: refresh fails, password re-login fixes auth -> no alert" {
+  alerts_configured
+  password_login_configured
+  echo ok >"$STATE"
+  echo 1 >"$STUB_DIR/auth.rc"
+  touch "$STUB_DIR/login-fixes"
+  run "$HEALTH"
+  [ "$status" -eq 0 ]
+  [ "$(sends)" = 0 ]
+  grep -qx 'heal-login --no-health' "$STUB_LOG"
+  grep -q 'healed by re-login' "$MFP_LOG_DIR/health.log"
+}
+
+@test "heal: both fail -> one red alert naming both attempts" {
+  alerts_configured
+  password_login_configured
+  echo ok >"$STATE"
+  echo 1 >"$STUB_DIR/auth.rc"
+  run "$HEALTH"
+  [ "$status" -eq 1 ]
+  [ "$(sends)" = 1 ]
+  grep -q 'refresh failed; password re-login failed' "$SENT"
+  grep -q 'mfpctl login' "$SENT"
+}
+
+@test "heal: a recent re-login is rate-limited" {
+  alerts_configured
+  password_login_configured
+  date +%s >"$MFP_STATE_DIR/relogin.last"
+  echo ok >"$STATE"
+  echo 1 >"$STUB_DIR/auth.rc"
+  run "$HEALTH"
+  [ "$(sends)" = 1 ]
+  grep -q heal-refresh "$STUB_LOG"
+  ! grep -q heal-login "$STUB_LOG" || false
+  grep -q 're-login skipped (rate limit, next after [0-9][0-9]:[0-9][0-9])' "$SENT"
+}
+
+@test "heal: no MFP_LOGIN_EMAIL means no re-login" {
+  echo 1 >"$STUB_DIR/auth.rc"
+  run "$HEALTH"
+  grep -q heal-refresh "$STUB_LOG"
+  ! grep -q heal-login "$STUB_LOG" || false
+  [[ "$output" == *"no password login configured"* ]] || false
+}
+
+@test "heal: no Keychain item means no re-login" {
+  password_login_configured
+  echo 44 >"$STUB_DIR/security.rc"
+  echo 1 >"$STUB_DIR/auth.rc"
+  run "$HEALTH"
+  ! grep -q heal-login "$STUB_LOG" || false
+  [[ "$output" == *"no Keychain password for mfp-login"* ]] || false
+}
+
+@test "heal: --no-heal, --dry-run and --simulate-fail auth never heal" {
+  password_login_configured
+  echo 1 >"$STUB_DIR/auth.rc"
+  run "$HEALTH" --no-heal
+  run "$HEALTH" --dry-run
+  echo 0 >"$STUB_DIR/auth.rc"
+  run "$HEALTH" --simulate-fail auth --dry-run
+  run "$HEALTH" --simulate-fail auth
+  ! grep -q 'heal-' "$STUB_LOG" || false
+}
+
+@test "refresh-session.sh runs the health check with --no-heal" {
+  grep -q 'health-check.sh" --wait 120 --no-heal' "$REPO_ROOT/scripts/refresh-session.sh"
+  grep -q 'health-check.sh" --wait 120 --no-heal' "$REPO_ROOT/scripts/login-mfp.sh"
 }

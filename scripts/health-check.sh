@@ -35,7 +35,7 @@ WAIT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
-    --no-heal) export NO_HEAL=1 ;;
+    --no-heal) NO_HEAL=1 ;;
     --simulate-fail)
       SIMULATE="${2:-}"
       shift
@@ -73,7 +73,7 @@ fail() {
 hint_for() {
   case "$1" in
     mcp) printf '%s' "run \`mfpctl restart\`; logs in ~/Library/Logs/mfp-mason" ;;
-    auth) printf '%s' "run \`mfp-mcp auth\` with a fresh cookie (auto-refresh may also recover on the next tool call)" ;;
+    auth) printf '%s' "run \`bin/mfpctl login\` at the Mac (or \`pbpaste | bin/mfp-auth\`)" ;;
     tunnel) printf '%s' "check ~/.config/mfp-mason/tunnel.env or run \`mfpctl tunnel disable\`" ;;
   esac
 }
@@ -107,22 +107,75 @@ find_mfp_mcp() {
   fi
 }
 
-check_auth() {
-  local bin out rc detail
-  if [ "$SIMULATE" = auth ]; then
-    fail auth "simulated failure" "$(hint_for auth)"
-    return
-  fi
+# auth_check_once : 0 if `mfp-mcp auth --check` passes; else sets AUTH_DETAIL.
+AUTH_DETAIL=""
+auth_check_once() {
+  local bin out rc
   if ! bin="$(find_mfp_mcp)"; then
-    fail auth "mfp-mcp not found" "re-run scripts/install-mac.sh"
-    return
+    AUTH_DETAIL="mfp-mcp not found (re-run scripts/install-mac.sh)"
+    return 1
   fi
   rc=0
   out="$("$bin" auth --check 2>&1)" || rc=$?
-  [ "$rc" -eq 0 ] && return
-  detail="$(printf '%s\n' "$out" | grep -E '^(Status|Session):' | tail -n 1 |
+  [ "$rc" -eq 0 ] && return 0
+  AUTH_DETAIL="$(printf '%s\n' "$out" | grep -E '^(Status|Session):' | tail -n 1 |
     sed -e 's/[[:space:]][[:space:]]*/ /g' | cut -c1-200)"
-  fail auth "${detail:-auth --check exited $rc}" "$(hint_for auth)"
+  [ -n "$AUTH_DETAIL" ] || AUTH_DETAIL="auth --check exited $rc"
+  return 1
+}
+
+hlog() {
+  printf '%s\n' "$*"
+  [ "$DRY_RUN" = 1 ] && return 0
+  mkdir -p "$MFP_LOG_DIR"
+  printf '%s %s\n' "$(date '+%Y-%m-%dT%H:%M:%S%z')" "$*" >>"$MFP_LOG_DIR/health.log"
+}
+
+REFRESH_SCRIPT="${MFP_REFRESH_SCRIPT:-$SCRIPT_DIR/refresh-session.sh}"
+LOGIN_SCRIPT="${MFP_LOGIN_SCRIPT:-$SCRIPT_DIR/login-mfp.sh}"
+HEALED=0
+
+# check_auth : on rejection, self-heal (unless --no-heal/--dry-run): refresh the
+# session, then a password re-login (at most once per 6 h), and only then fail.
+AUTH_FAIL=""
+check_auth() {
+  local tried=""
+  if [ "$SIMULATE" = auth ]; then
+    AUTH_FAIL="simulated failure"
+    return
+  fi
+  auth_check_once && return
+  if [ "$NO_HEAL" = 1 ] || [ "$DRY_RUN" = 1 ]; then
+    AUTH_FAIL="$AUTH_DETAIL"
+    return
+  fi
+
+  hlog "auth rejected ($AUTH_DETAIL); trying refresh"
+  /bin/bash "$REFRESH_SCRIPT" --no-health >/dev/null 2>&1 || true
+  HEALED=1
+  if auth_check_once; then
+    hlog "healed by refresh"
+    return
+  fi
+  tried="refresh failed"
+
+  if [ -z "${MFP_LOGIN_EMAIL:-}" ]; then
+    tried="$tried; no password login configured (MFP_LOGIN_EMAIL)"
+  elif ! keychain_has_login "$MFP_LOGIN_EMAIL"; then
+    tried="$tried; no Keychain password for $LOGIN_KEYCHAIN_SERVICE"
+  elif ! relogin_allowed; then
+    tried="$tried; re-login skipped (rate limit, next after $(relogin_next_hhmm))"
+    hlog "re-login skipped (rate limit, next after $(relogin_next_hhmm))"
+  else
+    hlog "trying password re-login"
+    /bin/bash "$LOGIN_SCRIPT" --no-health >/dev/null 2>&1 || true
+    if auth_check_once; then
+      hlog "healed by re-login"
+      return
+    fi
+    tried="$tried; password re-login failed"
+  fi
+  AUTH_FAIL="$AUTH_DETAIL ($tried)"
 }
 
 check_tunnel() {
@@ -135,8 +188,12 @@ check_tunnel() {
     fail tunnel "tunnel-client /readyz is not 200" "$(hint_for tunnel)"
 }
 
-check_mcp
 check_auth
+# Healing restarts Mason, so give it time to come back before probing.
+HEAL_WAIT="${MFP_HEAL_MCP_WAIT:-60}"
+if [ "$HEALED" = 1 ] && [ "$WAIT" -lt "$HEAL_WAIT" ]; then WAIT="$HEAL_WAIT"; fi
+check_mcp
+[ -z "$AUTH_FAIL" ] || fail auth "$AUTH_FAIL" "$(hint_for auth)"
 check_tunnel
 
 if [ -n "$FAILED" ]; then STATE="fail:$FAILED"; else STATE="ok"; fi
