@@ -42,7 +42,7 @@ git clone <this repo> ~/code/mfp-mason && cd ~/code/mfp-mason
 scripts/install-mac.sh --username <mfp username>   # add --with-tunnel for ChatGPT access
 # Recommended: the bot's own login (runbook step 4): MFP_LOGIN_EMAIL in mason.env, then
 security add-generic-password -s mfp-login -a 'you@example.com' -w   # prompts for the password
-bin/mfpctl login                  # at the Mac's screen; finish any captcha/2FA in the window
+bin/mfpctl login                  # at the Mac's screen; waits for Cloudflare Turnstile, click its box if shown
 # Fallback: pbpaste | bin/mfp-auth   (after copying the full Cookie request header)
 bin/mfpctl install
 sleep 20 && bin/mfpctl status     # Mason takes ~10 s to start

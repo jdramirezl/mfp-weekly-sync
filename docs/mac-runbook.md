@@ -87,9 +87,15 @@ on your phone.**
    bin/mfpctl login
    ```
 
-   - A Chromium window opens on MFP's login page and fills in the email and
-     password. If a captcha, a challenge or a 2FA prompt appears, finish it in
-     that window; the script waits up to 3 minutes.
+   - A Chromium window opens on MFP's login page and types in the email and
+     password.
+   - MFP's login page uses **Cloudflare Turnstile**: a "Verifying…" widget
+     under "Forgot password?" that keeps the Log in button disabled. The
+     script waits for it to clear before clicking, up to 60 s. If a
+     Cloudflare checkbox appears, click it in the window: the terminal says
+     *haz clic en la casilla de Cloudflare*.
+   - If a captcha, a challenge or a 2FA prompt appears, finish it in the same
+     window. The whole login waits up to 3 minutes.
    - The first time, macOS asks whether `security` may use the `mfp-login`
      item. Click **Always Allow**. Otherwise unattended re-logins block on
      that dialog.
@@ -303,8 +309,12 @@ What this repo adds so the session doesn't age out while nobody's using it:
   1. `refresh`
   2. if a password login is configured, a password **re-login**. A headed
      Chromium window may briefly appear on the Mac. At most one re-login runs
-     per 6 h, so MFP doesn't flag the account.
-  3. only then a 🔴 alert, which names what was tried.
+     per 6 h, so MFP doesn't flag the account. After a Turnstile or captcha
+     timeout (exit 6), which isn't a credentials rejection, it retries after
+     1 h instead.
+  3. only then a 🔴 alert. It names what was tried and why the re-login
+     failed, e.g. "timed out, Turnstile/captcha needs a click at the Mac's
+     screen".
 
   `bin/mfpctl logs | grep -E 'healed|re-login'` shows what happened. The re-login
   needs the Mac to stay logged in to its desktop session; it already does for
@@ -323,10 +333,19 @@ What this repo adds so the session doesn't age out while nobody's using it:
   `pbpaste | bin/mfp-auth`.
 - **`bin/mfpctl login` fails:** read `~/Library/Logs/mfp-mason/login.log`. It
   records which selectors matched. If MFP changed its login page, they need
-  updating in `scripts/mfp_login.py`. Exit codes:
+  updating in `scripts/mfp_login.py`. It also records the waiting states:
+  `turnstile pending` / `turnstile solved`, `button disabled` /
+  `button enabled`, `error banner: …`. Exit codes:
   - 4: no Keychain item
-  - 5: MFP rejected the email or password
-  - 6: timed out, usually an unfinished captcha or 2FA
+  - 5: MFP showed an explicit credentials error (`error banner: …` in the
+    log). Check the password. A page that is merely still on
+    `/account/login`, for example while Turnstile shows "Verifying…", is
+    never treated as a rejection.
+  - 6: timed out, usually `turnstile pending` (Cloudflare didn't clear) or an
+    unfinished captcha or 2FA. Run `bin/mfpctl login` again at the screen and
+    click the Cloudflare box if it appears. `MFP_IMPERSONATE` doesn't apply
+    here, because this is a real browser. If it keeps happening, wait a while
+    and retry.
 
   A failed run saves `login-failure.png` in the same folder. It may show your
   email; the folder is private (0700).

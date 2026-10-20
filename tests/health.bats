@@ -24,6 +24,9 @@ setup() {
 #!/bin/bash
 echo "heal-$step \$*" >>"\$STUB_LOG"
 [ -e "\$STUB_DIR/$step-fixes" ] && echo 0 >"\$STUB_DIR/auth.rc"
+if [ "$step" = login ] && [ -e "\$STUB_DIR/login-reason" ]; then
+  mkdir -p "\$MFP_LOG_DIR" && cat "\$STUB_DIR/login-reason" >>"\$MFP_LOG_DIR/login.log"
+fi
 exit 0
 EOF
   done
@@ -336,4 +339,24 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
 @test "refresh-session.sh runs the health check with --no-heal" {
   grep -q 'health-check.sh" --wait 120 --no-heal' "$REPO_ROOT/scripts/refresh-session.sh"
   grep -q 'health-check.sh" --wait 120 --no-heal' "$REPO_ROOT/scripts/login-mfp.sh"
+}
+
+@test "heal: the alert includes why the re-login failed" {
+  alerts_configured
+  password_login_configured
+  echo ok >"$STATE"
+  echo 1 >"$STUB_DIR/auth.rc"
+  printf '[mfp-login] turnstile pending\n❌ Login failed (exit 6: timed out, Turnstile/captcha needs a click at the Mac\x27s screen). See /x/login.log\n' >"$STUB_DIR/login-reason"
+  run "$HEALTH"
+  [ "$(sends)" = 1 ]
+  grep -q 'password re-login failed: Login failed (exit 6: timed out, Turnstile/captcha needs a click' "$SENT"
+}
+
+@test "heal: after a Turnstile timeout the re-login retries after 1 h" {
+  alerts_configured
+  password_login_configured
+  echo "$(($(date +%s) - 3601)) 6" >"$MFP_STATE_DIR/relogin.last"
+  echo 1 >"$STUB_DIR/auth.rc"
+  run "$HEALTH"
+  grep -q heal-login "$STUB_LOG"
 }

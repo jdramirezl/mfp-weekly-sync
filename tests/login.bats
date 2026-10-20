@@ -90,11 +90,18 @@ hash8() { printf '%s' "$1" | shasum -a 256 | cut -c1-8; }
   ! grep -qx 'mfp-mcp auth --check' "$STUB_LOG" || false
 }
 
-@test "timeout exit is explained" {
+@test "timeout exit is explained as Turnstile and recorded with its exit code" {
   echo 6 >"$STUB_DIR/login.rc"
   run "$LOGIN" --no-health
   [ "$status" -eq 6 ]
-  [[ "$output" == *"timed out"* ]] || false
+  [[ "$output" == *"timed out, Turnstile/captcha needs a click"* ]] || false
+  [[ "$(cat "$MFP_STATE_DIR/relogin.last")" == *" 6" ]] || false
+}
+
+@test "a successful login records exit 0 in relogin.last" {
+  run "$LOGIN" --no-health
+  [ "$status" -eq 0 ]
+  [[ "$(cat "$MFP_STATE_DIR/relogin.last")" =~ ^[0-9]+\ 0$ ]] || false
 }
 
 @test "the password never appears anywhere" {
@@ -131,6 +138,28 @@ hash8() { printf '%s' "$1" | shasum -a 256 | cut -c1-8; }
   "$MFPCTL" install
   [ -x "$MFP_STATE_DIR/bin/login-mfp.sh" ]
   [ -f "$MFP_STATE_DIR/bin/mfp_login.py" ]
+}
+
+allowed() { bash -c ". '$REPO_ROOT/scripts/lib/common.sh'; mfp_init_paths; relogin_allowed"; }
+
+@test "relogin retries after 1 h when the last attempt hit Turnstile (exit 6)" {
+  mkdir -p "$MFP_STATE_DIR"
+  echo "$(($(date +%s) - 3500)) 6" >"$MFP_STATE_DIR/relogin.last"
+  run allowed
+  [ "$status" -ne 0 ]
+  echo "$(($(date +%s) - 3601)) 6" >"$MFP_STATE_DIR/relogin.last"
+  run allowed
+  [ "$status" -eq 0 ]
+}
+
+@test "relogin still waits 6 h after a credentials rejection (exit 5)" {
+  mkdir -p "$MFP_STATE_DIR"
+  echo "$(($(date +%s) - 3601)) 5" >"$MFP_STATE_DIR/relogin.last"
+  run allowed
+  [ "$status" -ne 0 ]
+  echo "$(($(date +%s) - 21601)) 5" >"$MFP_STATE_DIR/relogin.last"
+  run allowed
+  [ "$status" -eq 0 ]
 }
 
 @test "relogin_allowed honours the 6 h window" {

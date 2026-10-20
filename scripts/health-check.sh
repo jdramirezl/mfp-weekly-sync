@@ -139,7 +139,7 @@ HEALED=0
 # session, then a password re-login (at most once per 6 h), and only then fail.
 AUTH_FAIL=""
 check_auth() {
-  local tried=""
+  local tried="" reason
   if [ "$SIMULATE" = auth ]; then
     AUTH_FAIL="simulated failure"
     return
@@ -173,7 +173,8 @@ check_auth() {
       hlog "healed by re-login"
       return
     fi
-    tried="$tried; password re-login failed"
+    reason="$(sed -n 's/^❌ //p' "$MFP_LOG_DIR/login.log" 2>/dev/null | tail -n 1 | cut -c1-120 || true)"
+    tried="$tried; password re-login failed${reason:+: $reason}"
   fi
   AUTH_FAIL="$AUTH_DETAIL ($tried)"
 }

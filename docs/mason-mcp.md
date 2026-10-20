@@ -33,7 +33,9 @@ claude mcp add --transport http myfitnesspal http://127.0.0.1:8484/mcp
   your browser shares one session lineage with it, so whichever side refreshes
   first can invalidate the other. With its own login, the bot is independent
   and you can use MFP freely on your phone and in your browser. The health
-  check re-logs in automatically, at most once per 6 h.
+  check re-logs in automatically, at most once per 6 h, or 1 h after a
+  Cloudflare Turnstile timeout. The login waits for MFP's Turnstile widget and
+  only treats an explicit credentials error as a rejection.
 - Fallback: authenticate with the **full Cookie request header** (DevTools → Network →
   `www.myfitnesspal.com` → Request Headers → `cookie` → Copy value), piped
   with `pbpaste | bin/mfp-auth`. On SSO accounts, a lone session-token cookie

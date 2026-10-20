@@ -63,8 +63,10 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 mkdir -p "$MFP_LOG_DIR" "$MFP_STATE_DIR"
-# Record the attempt first: the 6-hour re-login rate limit counts failures too.
-date +%s >"$MFP_STATE_DIR/relogin.last"
+# Record the attempt first: the re-login rate limit counts failures too. The
+# exit code is added once known (exit 6 = Turnstile/timeout retries sooner).
+attempt_at="$(date +%s)"
+printf '%s\n' "$attempt_at" >"$MFP_STATE_DIR/relogin.last"
 
 trap mason_restore EXIT
 mason_stop_for_profile
@@ -77,6 +79,7 @@ MFP_LOGIN_EMAIL="$EMAIL" MFP_LOGIN_KEYCHAIN_SERVICE="$LOGIN_KEYCHAIN_SERVICE" \
   "$TOOL_PY" "$LOGIN_PY" 2>&1 | tee -a "$LOG_FILE"
 rc="${PIPESTATUS[0]}"
 set -e
+printf '%s %s\n' "$attempt_at" "$rc" >"$MFP_STATE_DIR/relogin.last"
 
 mason_restore
 
@@ -85,7 +88,7 @@ meaning() {
   case "$1" in
     4) echo "no Keychain password" ;;
     5) echo "MFP rejected the email/password" ;;
-    6) echo "timed out waiting for a session (captcha/2FA not finished?)" ;;
+    6) echo "timed out, Turnstile/captcha needs a click at the Mac's screen" ;;
     *) echo "unexpected error, see $LOG_FILE" ;;
   esac
 }

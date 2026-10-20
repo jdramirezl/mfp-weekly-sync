@@ -27,8 +27,8 @@ py() { /usr/bin/python3 "$LOGIN_PY"; }
   [[ "$output" == *"password field matched label=Password"* ]] || false
   [[ "$output" == *"submit button matched role-button"* ]] || false
   [[ "$output" == *"Saved 3 cookies."* ]] || false
-  grep -qx "fill label=Email Address you@example.com" "$FAKE_PW_LOG"
-  grep -qx "fill label=Password $PASSWORD" "$FAKE_PW_LOG"
+  grep -qx "type label=Email Address you@example.com" "$FAKE_PW_LOG"
+  grep -qx "type label=Password $PASSWORD" "$FAKE_PW_LOG"
   grep -q "launch $MFP_MCP_DATA_DIR/browser-profile headless=False" "$FAKE_PW_LOG"
   grep -q '"__Secure-next-auth.session-token": "SESSION-VALUE"' "$FAKE_SAVE_FILE"
   grep -q '"__cf_bm"' "$FAKE_SAVE_FILE"
@@ -62,7 +62,7 @@ py() { /usr/bin/python3 "$LOGIN_PY"; }
   FAKE_PW_MODE=already run py
   [ "$status" -eq 0 ]
   [[ "$output" == *"already logged in"* ]] || false
-  ! grep -q '^fill' "$FAKE_PW_LOG" || false
+  ! grep -q '^\(fill\|type\)' "$FAKE_PW_LOG" || false
   [ -s "$FAKE_SAVE_FILE" ]
 }
 
@@ -76,6 +76,7 @@ py() { /usr/bin/python3 "$LOGIN_PY"; }
 @test "rejected credentials exit 5 with a screenshot" {
   FAKE_PW_MODE=rejected run py
   [ "$status" -eq 5 ]
+  [[ "$output" == *"error banner: Incorrect email or password"* ]] || false
   [[ "$output" == *"MFP rejected the email/password"* ]] || false
   [ -e "$MFP_LOG_DIR/login-failure.png" ]
   [ ! -e "$FAKE_SAVE_FILE" ]
@@ -84,7 +85,7 @@ py() { /usr/bin/python3 "$LOGIN_PY"; }
 @test "no session within the timeout exits 6" {
   FAKE_PW_MODE=timeout MFP_LOGIN_TIMEOUT=1 run py
   [ "$status" -eq 6 ]
-  [[ "$output" == *"no MFP session after 1s"* ]] || false
+  [[ "$output" == *"no MFP session after 1s (last state: still on login page)"* ]] || false
 }
 
 @test "a missing Keychain item exits 4 without launching a browser" {
@@ -98,4 +99,59 @@ py() { /usr/bin/python3 "$LOGIN_PY"; }
 @test "reads the password from the configured Keychain service" {
   MFP_LOGIN_KEYCHAIN_SERVICE=other-svc run py
   grep -qx 'security find-generic-password -s other-svc -a you@example.com -w' "$STUB_LOG"
+}
+
+@test "Spanish credentials error also counts as rejected" {
+  FAKE_PW_MODE=spanish_rejected run py
+  [ "$status" -eq 5 ]
+  [[ "$output" == *"error banner: Contraseña incorrecta"* ]] || false
+}
+
+@test "turnstile: waits for the token before clicking Log in" {
+  FAKE_PW_MODE=turnstile run py
+  [ "$status" -eq 0 ]
+  ! grep -q '^click-disabled' "$FAKE_PW_LOG" || false
+  [ "$(grep -c '^click ' "$FAKE_PW_LOG")" = 1 ]
+  [[ "$output" == *"turnstile pending"*"turnstile solved"* ]] || false
+  [[ "$output" == *"button disabled"*"button enabled"* ]] || false
+  [[ "$output" != *TS-TOKEN-VALUE* ]] || false
+  [[ "$output" == *"Saved"* ]] || false
+}
+
+@test "turnstile widget with role=alert 'Verifying…' is NOT a rejection (setup-day bug)" {
+  FAKE_PW_MODE=turnstile_widget_alert run py
+  [ "$status" -eq 0 ]
+  [[ "$output" != *"rejected"* ]] || false
+  [[ "$output" != *"error banner"* ]] || false
+  ! grep -q '^click-disabled' "$FAKE_PW_LOG" || false
+}
+
+@test "interactive turnstile asks for a click once, then succeeds" {
+  FAKE_PW_MODE=turnstile_interactive run py
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c 'haz clic en la casilla de Cloudflare')" = 1 ]
+  ! grep -q '^click-disabled' "$FAKE_PW_LOG" || false
+}
+
+@test "turnstile that never clears times out (exit 6) without clicking" {
+  FAKE_PW_MODE=turnstile_stuck MFP_TURNSTILE_TIMEOUT=1 MFP_LOGIN_TIMEOUT=2 run py
+  [ "$status" -eq 6 ]
+  [[ "$output" == *"turnstile pending at timeout"* ]] || false
+  [[ "$output" == *"last state: turnstile pending"* ]] || false
+  ! grep -q '^click' "$FAKE_PW_LOG" || false
+  [ -e "$MFP_LOG_DIR/login-failure.png" ]
+}
+
+@test "turnstile reappearing after submit gets one more submit, then succeeds" {
+  FAKE_PW_MODE=post_submit_turnstile run py
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^click ' "$FAKE_PW_LOG")" = 2 ]
+  ! grep -q '^click-disabled' "$FAKE_PW_LOG" || false
+  [ "$(printf '%s\n' "$output" | grep -c 'haz clic en la casilla de Cloudflare')" = 1 ]
+}
+
+@test "the password is typed, never printed, even through Turnstile" {
+  FAKE_PW_MODE=turnstile run py
+  grep -qx "type label=Password $PASSWORD" "$FAKE_PW_LOG"
+  [[ "$output" != *"$PASSWORD"* ]] || false
 }

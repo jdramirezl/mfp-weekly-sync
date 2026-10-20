@@ -200,22 +200,40 @@ keychain_has_login() {
   security find-generic-password -s "$LOGIN_KEYCHAIN_SERVICE" -a "$1" >/dev/null 2>&1
 }
 
-# relogin_allowed : at most one password re-login per MFP_RELOGIN_MIN_INTERVAL
-# seconds (default 6 h) so MFP doesn't flag the account.
+# relogin.last holds "<epoch> <exit>" (older installs: "<epoch>").
+relogin_last_field() {
+  local f="$MFP_STATE_DIR/relogin.last" v
+  [ -f "$f" ] || return 1
+  v="$(awk -v n="$1" 'NR == 1 { print $n }' "$f" 2>/dev/null)"
+  printf '%s\n' "$v"
+}
+
+# relogin_interval : seconds before another password re-login is allowed.
+# At most one per 6 h (MFP_RELOGIN_MIN_INTERVAL) so MFP doesn't flag the
+# account, but only 1 h (MFP_RELOGIN_RETRY_INTERVAL) after an exit-6 timeout:
+# that is Cloudflare Turnstile / a captcha, not a credentials rejection.
+relogin_interval() {
+  if [ "$(relogin_last_field 2 2>/dev/null)" = 6 ]; then
+    printf '%s\n' "${MFP_RELOGIN_RETRY_INTERVAL:-3600}"
+  else
+    printf '%s\n' "${MFP_RELOGIN_MIN_INTERVAL:-21600}"
+  fi
+}
+
 relogin_allowed() {
-  local f="$MFP_STATE_DIR/relogin.last" last now
-  [ -f "$f" ] || return 0
-  last="$(cat "$f" 2>/dev/null || echo 0)"
+  local last now
+  last="$(relogin_last_field 1 2>/dev/null)" || return 0
   case "$last" in '' | *[!0-9]*) return 0 ;; esac
   now="$(date +%s)"
-  [ $((now - last)) -ge "${MFP_RELOGIN_MIN_INTERVAL:-21600}" ]
+  [ $((now - last)) -ge "$(relogin_interval)" ]
 }
 
 # relogin_next_hhmm : local HH:MM when the next re-login is allowed.
 relogin_next_hhmm() {
   local last
-  last="$(cat "$MFP_STATE_DIR/relogin.last" 2>/dev/null || echo 0)"
-  date -r $((last + ${MFP_RELOGIN_MIN_INTERVAL:-21600})) '+%H:%M' 2>/dev/null || echo '?'
+  last="$(relogin_last_field 1 2>/dev/null || echo 0)"
+  case "$last" in '' | *[!0-9]*) last=0 ;; esac
+  date -r $((last + $(relogin_interval))) '+%H:%M' 2>/dev/null || echo '?'
 }
 
 USERNAME_HINT="SSO/email MyFitnessPal logins need MFP_USERNAME (your MFP username, not email): put MFP_USERNAME=<name> in ~/.config/mfp-mason/mason.env (chmod 600), then run: bin/mfpctl restart"
