@@ -3,8 +3,10 @@
 #
 #   pbpaste | bin/mfp-auth [--username NAME] [--no-restart] [--dry-run]
 #
-# Copy the value of the __Secure-next-auth.session-token cookie from DevTools
-# first. Reads the cookie from stdin only. It never appears in argv, the
+# Copy the FULL Cookie request header from DevTools first (Network ->
+# www.myfitnesspal.com -> Request Headers -> cookie -> Copy value). On SSO
+# accounts a lone session-token cookie was rejected within minutes and never
+# rotated; the full header (all ~17 cookies) worked. Reads stdin only. It never appears in argv, the
 # environment, output or logs. Pasting a long cookie into the hidden prompt of
 # `mfp-mcp auth` can hang the terminal, which is why this reads a pipe instead.
 set -euo pipefail
@@ -17,15 +19,24 @@ usage() {
   cat <<'EOF'
 Usage: pbpaste | bin/mfp-auth [--username NAME] [--no-restart] [--dry-run]
 
-Copy the value of the __Secure-next-auth.session-token cookie (DevTools ->
-Application -> Cookies -> https://www.myfitnesspal.com), then run:
+Copy the full Cookie request header, then pipe it in:
 
-  pbpaste | bin/mfp-auth --username <your MFP username>
+  1. On myfitnesspal.com, logged in, open DevTools (Option-Cmd-I) -> Network.
+  2. Reload the page and select the www.myfitnesspal.com document request.
+  3. Under Request Headers, right-click "cookie" -> Copy value.
+  4. Run:
+       pbpaste | bin/mfp-auth --username <your MFP username>
 
   --username NAME  Your MyFitnessPal username (not email). Needed for SSO/email
                    logins; defaults to MFP_USERNAME or ~/.config/mfp-mason/mason.env.
   --no-restart     Don't restart the Mason service after a successful auth.
   --dry-run        Validate the input and show what would run; change nothing.
+
+Do not log out of MyFitnessPal in that browser afterwards: logging out ends
+the session Mason now uses. Closing the tab is fine.
+
+Pasting only the __Secure-next-auth.session-token value is not recommended;
+MFP may reject it within minutes.
 EOF
 }
 
@@ -73,9 +84,17 @@ cookie="${cookie#"${cookie%%[![:space:]]*}"}"
 cookie="${cookie%"${cookie##*[![:space:]]}"}"
 [ -n "$cookie" ] || {
   usage >&2
-  die "stdin was empty. Copy the cookie value first, then: pbpaste | bin/mfp-auth"
+  die "stdin was empty. Copy the Cookie request header first, then: pbpaste | bin/mfp-auth"
 }
-log "Input received (${#cookie} characters). Validating…"
+# Count cookies (never print them): name=value pairs split on ';'.
+case "$cookie" in
+  *=*) ncookies="$(printf '%s' "$cookie" | tr ';' '\n' | grep -c '=' || true)" ;;
+  *) ncookies=1 ;;
+esac
+log "Input received (${#cookie} characters, ${ncookies} cookies). Validating…"
+if [ "$ncookies" -le 1 ]; then
+  warn "Only one cookie received. For SSO (Google/Apple) accounts a lone session token is often rejected within minutes. Copy the whole Cookie request header instead: DevTools → Network → www.myfitnesspal.com → Request Headers → cookie → Copy value."
+fi
 
 # Username: --username, then MFP_USERNAME / mason.env / Mason's saved session.
 if [ -n "$USERNAME_ARG" ]; then
@@ -116,7 +135,7 @@ hints() {
   printf '  Hints:\n' >&2
   printf '  - %s\n' "$USERNAME_HINT" >&2
   printf '  - 403 / Cloudflare: add MFP_IMPERSONATE=chrome124 to ~/.config/mfp-mason/mason.env\n' >&2
-  printf '  - Copy a fresh cookie: log out/in on myfitnesspal.com, then copy __Secure-next-auth.session-token again\n' >&2
+  printf '  - Copy the FULL Cookie request header (DevTools → Network → www.myfitnesspal.com → Request Headers → cookie → Copy value), not just the session token\n' >&2
 }
 
 if [ "$rc" -ne 0 ]; then
@@ -137,6 +156,7 @@ fi
 
 user="$(printf '%s' "$status_line" | sed -n 's/.*connected as //p')"
 printf '✅ Connected as %s; auto-refresh %s\n' "${user:-$USERNAME}" "${refresh_line:-unknown}"
+printf "   Don't log out of MyFitnessPal in the browser you copied this from.\n"
 
 if [ "$RESTART" = 1 ] && launchctl print "gui/$(id -u)/$LABEL_MASON" >/dev/null 2>&1; then
   launchctl kickstart -k "gui/$(id -u)/$LABEL_MASON"

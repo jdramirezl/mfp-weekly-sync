@@ -15,7 +15,7 @@ setup() {
   run bash -c "printf '%s' '$COOKIE' | '$AUTH' --username jdr"
   [ "$status" -eq 0 ]
   [ "$(cat "$STUB_DIR/auth-stdin")" = "$COOKIE" ]
-  [[ "$output" == *"Input received (${#COOKIE} characters). Validating…"* ]] || false
+  [[ "$output" == *"Input received (${#COOKIE} characters, 1 cookies). Validating…"* ]] || false
   [[ "$output" == *"✅ Connected as fakeuser; auto-refresh ready"* ]] || false
   grep -qx 'mfp-mcp auth' "$STUB_LOG"
   grep -qx 'mfp-mcp auth --check' "$STUB_LOG"
@@ -33,7 +33,7 @@ setup() {
   run bash -c "printf 'Cookie:  %s \r\n' '$COOKIE' | '$AUTH' --username jdr"
   [ "$status" -eq 0 ]
   [ "$(cat "$STUB_DIR/auth-stdin")" = "$COOKIE" ]
-  [[ "$output" == *"Input received (${#COOKIE} characters)"* ]] || false
+  [[ "$output" == *"Input received (${#COOKIE} characters, 1 cookies)"* ]] || false
 }
 
 @test "empty input fails with the pbpaste hint" {
@@ -112,4 +112,57 @@ setup() {
   [ "$status" -eq 0 ]
   [ "$(cat "$STUB_DIR/auth-stdin")" = "$COOKIE" ]
   [[ "$output" == *"✅ Connected as"* ]] || false
+}
+
+# A realistic multi-cookie header: ';' separators, '=' inside values.
+write_header() {
+  printf 'Cookie: __Secure-next-auth.session-token=abc.SECRETTOKEN.def==; __cf_bm=x=SECRETCF; _ga=GA1.2.SECRETGA; p=1 \r\n' >"$BATS_TEST_TMPDIR/header"
+}
+HEADER_CLEAN='__Secure-next-auth.session-token=abc.SECRETTOKEN.def==; __cf_bm=x=SECRETCF; _ga=GA1.2.SECRETGA; p=1'
+
+@test "a full Cookie header reaches Mason byte-for-byte, without a warning" {
+  write_header
+  run bash -c "'$AUTH' --username jdr <'$BATS_TEST_TMPDIR/header'"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/auth-stdin")" = "$HEADER_CLEAN" ]
+  [[ "$output" == *"Input received (${#HEADER_CLEAN} characters, 4 cookies). Validating…"* ]] || false
+  [[ "$output" != *"Only one cookie received"* ]] || false
+}
+
+@test "no value from a full header leaks to output, argv or env" {
+  write_header
+  run bash -c "'$AUTH' --username jdr <'$BATS_TEST_TMPDIR/header'"
+  [ "$status" -eq 0 ]
+  [[ "$output" != *SECRET* ]] || false
+  ! grep -q SECRET "$STUB_LOG" || false
+  ! grep -q SECRET "$STUB_DIR/auth-env" || false
+}
+
+@test "a bare token warns about single-cookie input but still authenticates" {
+  run bash -c "printf '%s' '$COOKIE' | '$AUTH' --username jdr"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Only one cookie received"* ]] || false
+  [[ "$output" == *"Request Headers → cookie → Copy value"* ]] || false
+  [[ "$output" == *"✅ Connected as"* ]] || false
+}
+
+@test "a single name=value cookie also warns" {
+  run bash -c "printf '__Secure-next-auth.session-token=%s' '$COOKIE' | '$AUTH' --username jdr"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"1 cookies"* ]] || false
+  [[ "$output" == *"Only one cookie received"* ]] || false
+}
+
+@test "success reminds not to log out of MFP in that browser" {
+  write_header
+  run bash -c "'$AUTH' --username jdr <'$BATS_TEST_TMPDIR/header'"
+  [[ "$output" == *"Don't log out of MyFitnessPal in the browser you copied this from."* ]] || false
+}
+
+@test "--help documents the full-header method and the log-out caveat" {
+  run "$AUTH" --help
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Request Headers"*"Copy value"* ]] || false
+  [[ "$output" == *"Do not log out of MyFitnessPal in that browser"* ]] || false
+  [[ "$output" == *"not recommended"* ]] || false
 }

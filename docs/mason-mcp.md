@@ -2,7 +2,8 @@
 
 [Mason-Levyy/myfitnesspal-mcp](https://github.com/Mason-Levyy/myfitnesspal-mcp)
 (PyPI `mfp-mcp`) is the MCP server this repo runs. It signs in with your
-browser's current NextAuth session cookie (`__Secure-next-auth.session-token`)
+browser's MyFitnessPal cookies (the NextAuth session `__Secure-next-auth.session-token`
+plus the rest of the Cookie header)
 and calls MyFitnessPal over a Chrome TLS fingerprint (`curl_cffi`), which passes
 Cloudflare. Setup on the Mac is in [mac-runbook.md](mac-runbook.md).
 
@@ -27,9 +28,14 @@ claude mcp add --transport http myfitnesspal http://127.0.0.1:8484/mcp
   installer always includes, Mason boots a headless Chromium profile when
   MyFitnessPal rejects the session mid-call, lets the site rotate the token,
   saves it and retries the call.
+- Authenticate with the **full Cookie request header** (DevTools → Network →
+  `www.myfitnesspal.com` → Request Headers → `cookie` → Copy value), piped
+  with `pbpaste | bin/mfp-auth`. On SSO accounts, a lone session-token cookie
+  was rejected within minutes and never rotated. Afterwards, don't log out of
+  MFP in that browser; that ends the session.
 - Auto-refresh only keeps MFP's own NextAuth session sliding. It never redoes an
   SSO, Google or Apple login. A session that has fully expired or was revoked
-  needs a fresh cookie: `pbpaste | bin/mfp-auth`.
+  needs a fresh Cookie header: `pbpaste | bin/mfp-auth`.
 - Mason refreshes only reactively. This repo adds a weekly proactive refresh
   (`com.jdrami.mfp-refresh`, `mfpctl refresh`). The details are in
   [mac-runbook.md](mac-runbook.md#session-longevity-sso).
@@ -85,7 +91,8 @@ hub enforces this with approvals.
   `curl_cffi` target) in `~/.config/mfp-mason/mason.env`, then run
   `bin/mfpctl install`. Datacenter IPs are challenged far more than home ones.
 - **Session expired:** run `mfp-mcp auth --check`, then `bin/mfpctl refresh`.
-  If it's still rejected, use `pbpaste | bin/mfp-auth` with a fresh cookie.
+  If it's still rejected, use `pbpaste | bin/mfp-auth` with a freshly copied
+  full Cookie header.
 - **"couldn't read your MyFitnessPal profile":** set `MFP_USERNAME` to your
   username (not email) in `mason.env`, then run `bin/mfpctl restart` and
   `pbpaste | bin/mfp-auth`. MyFitnessPal's profile endpoint returns 500 for

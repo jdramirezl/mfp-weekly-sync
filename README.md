@@ -40,7 +40,7 @@ write your diary. So:
 ```bash
 git clone <this repo> ~/code/mfp-mason && cd ~/code/mfp-mason
 scripts/install-mac.sh --username <mfp username>   # add --with-tunnel for ChatGPT access
-pbpaste | bin/mfp-auth            # after copying the __Secure-next-auth.session-token value
+pbpaste | bin/mfp-auth            # after copying the full Cookie request header (see runbook step 4)
 bin/mfpctl install
 sleep 20 && bin/mfpctl status     # Mason takes ~10 s to start
 ```
@@ -83,7 +83,8 @@ Mason refreshes the MFP session only when a call is rejected, and only by
 sliding MFP's existing NextAuth session. It never redoes an SSO login.
 `com.jdrami.mfp-refresh` also rotates it proactively every Sunday at 04:30 so
 an idle session doesn't age out. A session that has fully expired or was
-revoked needs `pbpaste | bin/mfp-auth`. See
+revoked needs a re-auth: copy the full Cookie request header again and run
+`pbpaste | bin/mfp-auth`. Don't log out of MFP in that browser. See
 [docs/mac-runbook.md](docs/mac-runbook.md#session-longevity-sso).
 
 ## Layout

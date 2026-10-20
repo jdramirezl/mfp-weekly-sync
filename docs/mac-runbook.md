@@ -52,11 +52,14 @@ open a new Terminal.
 
 ## 4. Connect MyFitnessPal
 
-1. Log in at myfitnesspal.com.
-2. Open DevTools (⌥⌘I), then **Application** → **Cookies** →
-   `https://www.myfitnesspal.com`, and copy the value of
-   `__Secure-next-auth.session-token`.
-3. Pipe it from the clipboard. The value never shows on screen, in shell
+Copy the **full Cookie request header**, not just the session token:
+
+1. Log in at myfitnesspal.com in the browser on this Mac.
+2. Open DevTools (⌥⌘I), then the **Network** tab, and reload the page.
+3. Select the `www.myfitnesspal.com` document request (the first row).
+4. Under **Request Headers**, right-click `cookie` and choose **Copy value**.
+   You get all the cookies in one line, about 17 of them.
+5. Pipe it from the clipboard. The value never shows on screen, in shell
    history, or in a file:
 
 ```bash
@@ -64,9 +67,23 @@ pbpaste | bin/mfp-auth --username <mfp username>   # or: pbpaste | bin/mfpctl au
 ```
 
 Done when it prints `✅ Connected as <you>; auto-refresh ready`. It reports only
-`Input received (N characters)`, then runs `mfp-mcp auth --check` for you. On
-failure it prints `❌` with hints. If Mason is already running, it restarts it
-so the new session is used.
+`Input received (N characters, M cookies)`, then runs `mfp-mcp auth --check` for
+you. On failure it prints `❌` with hints. If Mason is already running, it
+restarts it so the new session is used.
+
+Why the full header: on setup day, with a Google SSO account, a lone
+`__Secure-next-auth.session-token` was rejected by MFP within minutes and
+`mfpctl refresh` never rotated it. The full header passed `auth --check`, kept
+`health: ok`, and refreshes reported `rotated: yes`. `mfp-auth` warns when it
+receives only one cookie.
+
+**Don't log out of MyFitnessPal in that browser afterwards.** Logging out ends
+the session Mason now uses, and so does "log out everywhere". Closing the tab
+or quitting the browser is fine.
+
+Fallback, not recommended: copying only the `__Secure-next-auth.session-token`
+value (DevTools Application tab, Cookies) also works, but MFP may reject
+it within minutes.
 
 Don't paste into the hidden prompt of a bare `mfp-mcp auth`. On setup day a long
 cookie made that prompt hang.
@@ -192,8 +209,10 @@ How Mason's auto-refresh works, from its source (`refresh.py`, `server.py`):
 - If the session has reached MFP's absolute lifetime, was revoked (log out
   everywhere, password or security reset), or MFP won't extend it, nothing
   valid comes back. Tool calls then fail with "session expired", the health
-  check sends 🔴, and the only fix is a fresh cookie:
-  `pbpaste | bin/mfp-auth` (step 4).
+  check sends 🔴, and the only fix is to copy the full Cookie request header
+  again and run `pbpaste | bin/mfp-auth` (step 4).
+- Logging out of MFP in the browser you copied the header from, or "log out
+  everywhere", revokes the session immediately and requires a re-auth.
 
 What this repo adds so the session doesn't age out while nobody's using it:
 
@@ -207,7 +226,9 @@ What this repo adds so the session doesn't age out while nobody's using it:
     hashes of the token are logged.
 - **To run it now:** `bin/mfpctl refresh`. Check the result with
   `bin/mfpctl logs | grep rotated:`.
-- **Interpreting the log:** `rotated: no` isn't an error. It means MFP didn't
+- **`rotated: no` after a token-only auth** is the signature of the
+  single-cookie problem. Re-auth with the full Cookie header (step 4).
+- **Interpreting the log:** otherwise, `rotated: no` isn't an error. It means MFP didn't
   re-issue the token on a plain visit. Whether a visit actually rotates it is
   unverified until the first real run, so check the log after the first Sunday.
   If it never rotates and you still get expiry alerts, re-auth with pbpaste
@@ -222,7 +243,10 @@ What this repo adds so the session doesn't age out while nobody's using it:
 - **`MCP ... UNREACHABLE`:** run `bin/mfpctl restart`, then check `mason.err.log`.
   launchd waits 30 s between crash restarts.
 - **`Status: rejected (...)`:** run `bin/mfpctl refresh`. If it stays rejected,
-  re-auth: `pbpaste | bin/mfp-auth`.
+  copy the full Cookie request header (step 4) and run `pbpaste | bin/mfp-auth`.
+- **Rejected within minutes of auth, or `rotated: no`:** you probably pasted
+  only the session token, or logged out of MFP in that browser. Re-auth with the
+  full Cookie header and stay logged in.
 - **"couldn't read your MyFitnessPal profile" / 500:** set `MFP_USERNAME` in
   `~/.config/mfp-mason/mason.env`, then `bin/mfpctl restart` and re-auth.
 - **Hub has no `fitness_*` tools:** Mason was down when the hub started.

@@ -43,3 +43,9 @@ doc_files() {
     [[ "$output" == *"  $c"* ]] || false
   done
 }
+
+@test "runbook documents the full Cookie header and the log-out caveat" {
+  grep -q 'Copy value' "$REPO_ROOT/docs/mac-runbook.md"
+  grep -qi "don't log out\|do not log out" "$REPO_ROOT/docs/mac-runbook.md"
+  ! grep -rq 'Application\*\* → \*\*Cookies' "$REPO_ROOT/README.md" "$REPO_ROOT/docs" || false
+}

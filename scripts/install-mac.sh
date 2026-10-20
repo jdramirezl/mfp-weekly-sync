@@ -169,7 +169,7 @@ cat <<EOF
 
 $( [ "$DRY_RUN" = 1 ] && echo "Dry run: nothing was changed." || echo "Install step done.") Next, in a normal Terminal window:
   0. If "mfp-mcp: command not found": uv tool update-shell, then open a new Terminal
-  1. pbpaste | bin/mfp-auth  # after copying the __Secure-next-auth.session-token value
+  1. pbpaste | bin/mfp-auth  # after copying the full Cookie request header (DevTools → Network)
   2. mfp-mcp auth --check    # should say "Status: valid" and "Auto-refresh: ready"
   3. bin/mfpctl install      # start the launchd services
   4. cp "$MFP_CONFIG_DIR/alert.env.example" "$MFP_CONFIG_DIR/alert.env" && chmod 600 "$MFP_CONFIG_DIR/alert.env"
