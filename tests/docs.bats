@@ -60,3 +60,9 @@ doc_files() {
   grep -q 'Guest' "$REPO_ROOT/docs/mac-runbook.md"
   grep -q '__Host-' "$REPO_ROOT/docs/mac-runbook.md"
 }
+
+@test "runbook documents the consent banner and exit 9" {
+  grep -q 'consent banner dismissed' "$REPO_ROOT/docs/mac-runbook.md"
+  grep -q '  - 9: ' "$REPO_ROOT/docs/mac-runbook.md"
+  grep -q "tr -d '\\\\n' | wc -c" "$REPO_ROOT/docs/mac-runbook.md"
+}

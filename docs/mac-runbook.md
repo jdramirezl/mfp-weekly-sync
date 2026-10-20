@@ -110,6 +110,14 @@ on your phone.**
      script waits for it to clear before clicking, up to 60 s. If a
      Cloudflare checkbox appears, click it in the window: the terminal says
      *haz clic en la casilla de Cloudflare*.
+   - If MFP's **cookie-consent banner** appears (OneTrust, "Accept all",
+     "Aceptar"), the script clicks accept, never reject or settings, and logs
+     `consent banner dismissed (…)`. If it can't, the terminal asks you to
+     accept it in the window, and nothing is typed until it's gone.
+   - Before clicking Log in, the script checks that the email and password
+     fields really hold what was typed. It logs lengths only, e.g.
+     `email field length ok (15)`, and retypes a field the page lost, up to
+     twice.
    - If a captcha, a challenge or a 2FA prompt appears, finish it in the same
      window. The whole login waits up to 3 minutes.
    - The first time, macOS asks whether `security` may use the `mfp-login`
@@ -369,9 +377,9 @@ What this repo adds so the session doesn't age out while nobody's using it:
      Google Chrome window may briefly appear on the Mac. It uses the same
      patchright path as `bin/mfpctl login`, automatic mode only. At most one
      re-login runs
-     per 6 h, so MFP doesn't flag the account. After a Turnstile or captcha
-     timeout (exit 6), which isn't a credentials rejection, it retries after
-     1 h instead.
+     per 6 h, so MFP doesn't flag the account. After a Turnstile, captcha or
+     consent-banner problem (exit 6 or 9), which isn't a credentials
+     rejection, it retries after 1 h instead.
   3. only then a 🔴 alert. It names what was tried and why the re-login
      failed, and tells you to run `bin/mfpctl login` at the Mac's screen, or
      `bin/mfpctl login --manual` if Cloudflare keeps failing.
@@ -394,14 +402,24 @@ What this repo adds so the session doesn't age out while nobody's using it:
 - **`bin/mfpctl login` fails:** read `~/Library/Logs/mfp-mason/login.log`. It
   records which selectors matched. If MFP changed its login page, they need
   updating in `scripts/mfp_login.py`. It also records the waiting states:
-  `turnstile pending` / `turnstile solved` / `turnstile failed: …` (the widget
+  `consent banner dismissed (…)`, `email/password field length ok (N)` or
+  `length mismatch`, `turnstile pending` / `turnstile solved` /
+  `turnstile failed: …` (the widget
   itself reported an error), `button disabled` / `button enabled`,
   `error banner: …`. Exit codes:
   - 4: no Keychain item
-  - 5: MFP showed an explicit credentials error (`error banner: …` in the
-    log). Check the password. A page that is merely still on
+  - 5: MFP showed an explicit credentials error (`error banner: …`) after a
+    **clean** submit, with both field lengths verified right before the
+    click. The password is probably wrong. A page that is merely still on
     `/account/login`, for example while Turnstile shows "Verifying…", is
-    never treated as a rejection.
+    never treated as a rejection. To check the Keychain password without
+    revealing it:
+    1. Print only its length:
+       `security find-generic-password -s mfp-login -a <email> -w | tr -d '\n' | wc -c`
+       Compare it with the password you set.
+    2. Log in with email + password in a Chrome Guest window. If MFP accepts
+       the password there, update the Keychain item (it prompts):
+       `security add-generic-password -U -s mfp-login -a <email> -w`
   - 6: timed out, usually `turnstile pending` or `turnstile failed`
     (Cloudflare didn't clear), an unfinished captcha or 2FA, or a browser
     timeout. Run `bin/mfpctl login` again at the screen and click the
@@ -409,6 +427,10 @@ What this repo adds so the session doesn't age out while nobody's using it:
     `bin/mfpctl login --manual`. `MFP_IMPERSONATE` doesn't apply here,
     because this is a real browser.
   - 7: an unexpected error, logged by type. Check `login.log`.
+  - 9: MFP rejected the login after a cookie-consent banner or a field
+    retype, so the typed input may have been lost. This is not evidence of a
+    wrong password. Re-run `bin/mfpctl login` at the screen. The automatic
+    re-login retries after 1 h, not 6 h.
   - 8: the login environment is missing: the patchright venv or Google
     Chrome. Run `scripts/install-mac.sh`, and install Chrome if it says so.
 

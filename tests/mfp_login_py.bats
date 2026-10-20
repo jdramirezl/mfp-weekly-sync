@@ -85,6 +85,7 @@ py() { /usr/bin/python3 "$LOGIN_PY" "$@"; }
 @test "rejected credentials exit 5 with a screenshot" {
   FAKE_PW_MODE=rejected run py
   [ "$status" -eq 5 ]
+  [[ "$output" == *"email field length ok (15)"*"password field length ok (20)"*"error banner"* ]] || false
   [[ "$output" == *"error banner: Incorrect email or password"* ]] || false
   [[ "$output" == *"MFP rejected the email/password"* ]] || false
   [ -e "$MFP_LOG_DIR/login-failure.png" ]
@@ -224,4 +225,64 @@ py() { /usr/bin/python3 "$LOGIN_PY" "$@"; }
   [ "$status" -eq 0 ]
   [[ "$output" != *SESSION-VALUE* ]] || false
   [[ "$output" != *TS-TOKEN-VALUE* ]] || false
+}
+
+no_values() {
+  [[ "$output" != *"$PASSWORD"* ]] || false
+  [[ "$output" != *"you@example.com"* ]] || false
+}
+
+@test "consent: OneTrust banner is dismissed before typing; fields verified" {
+  FAKE_PW_MODE=consent run py
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c 'consent banner dismissed (#onetrust-accept-btn-handler)')" = 1 ]
+  [[ "$output" == *"email field length ok (15)"* ]] || false
+  [[ "$output" == *"password field length ok (20)"* ]] || false
+  ! grep -q '^type-swallowed\|submit-with-empty-fields' "$FAKE_PW_LOG" || false
+  # dismissed before the first keystroke
+  [ "$(grep -n 'click-consent' "$FAKE_PW_LOG" | head -1 | cut -d: -f1)" -lt "$(grep -n '^type ' "$FAKE_PW_LOG" | head -1 | cut -d: -f1)" ]
+  [[ "$output" == *"Harvested"* ]] || false
+  no_values
+}
+
+@test "consent_late: a banner that wipes the form is dismissed and the fields retyped" {
+  FAKE_PW_MODE=consent_late run py
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"length mismatch (got 0, expected"* ]] || false
+  [[ "$output" == *"consent banner dismissed"* ]] || false
+  [[ "$output" == *"email field length ok (15)"* ]] || false
+  ! grep -q 'submit-with-empty-fields' "$FAKE_PW_LOG" || false
+  [ "$(grep -c '^click role-button\|^click button' "$FAKE_PW_LOG")" = 1 ]
+  no_values
+}
+
+@test "consent_role: clicks 'Aceptar todo', never 'Rechazar'" {
+  FAKE_PW_MODE=consent_role run py
+  [ "$status" -eq 0 ]
+  grep -q '^click-consent role-consent' "$FAKE_PW_LOG"
+  ! grep -q 'click-reject' "$FAKE_PW_LOG" || false
+  [[ "$output" == *"consent banner dismissed (role-button accept)"* ]] || false
+}
+
+@test "consent_stuck: never types or submits; exit 6 with last state consent banner" {
+  FAKE_PW_MODE=consent_stuck MFP_LOGIN_TIMEOUT=2 MFP_TURNSTILE_TIMEOUT=1 run py
+  [ "$status" -eq 6 ]
+  [ "$(printf '%s\n' "$output" | grep -c 'consent banner present but could not be dismissed')" = 1 ]
+  [[ "$output" == *"last state: consent banner"* ]] || false
+  ! grep -q '^click role-button\|^type ' "$FAKE_PW_LOG" || false
+}
+
+@test "swallow_once: a lost email keystroke run is detected and retyped" {
+  FAKE_PW_MODE=swallow_once run py
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"email field length mismatch (got 0, expected 15)"*"email field length ok (15)"* ]] || false
+  ! grep -q 'submit-with-empty-fields' "$FAKE_PW_LOG" || false
+  no_values
+}
+
+@test "a rejection after a consent banner is exit 9, not 5" {
+  FAKE_PW_MODE=consent_then_rejected run py
+  [ "$status" -eq 9 ]
+  [[ "$output" == *"error banner: Incorrect username or password"* ]] || false
+  [[ "$output" == *"rejected after consent banner; likely lost input, not a wrong password"* ]] || false
 }

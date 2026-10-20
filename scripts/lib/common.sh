@@ -251,14 +251,16 @@ relogin_last_field() {
 
 # relogin_interval : seconds before another password re-login is allowed.
 # At most one per 6 h (MFP_RELOGIN_MIN_INTERVAL) so MFP doesn't flag the
-# account, but only 1 h (MFP_RELOGIN_RETRY_INTERVAL) after an exit-6 timeout:
-# that is Cloudflare Turnstile / a captcha, not a credentials rejection.
+# account, but only 1 h (MFP_RELOGIN_RETRY_INTERVAL) after exit 6 (Turnstile /
+# captcha / consent-banner timeout) or exit 9 (rejected after a consent banner
+# or a field retype): neither is evidence of a wrong password.
 relogin_interval() {
-  if [ "$(relogin_last_field 2 2>/dev/null)" = 6 ]; then
+  case "$(relogin_last_field 2 2>/dev/null)" in 6 | 9)
     printf '%s\n' "${MFP_RELOGIN_RETRY_INTERVAL:-3600}"
-  else
-    printf '%s\n' "${MFP_RELOGIN_MIN_INTERVAL:-21600}"
-  fi
+    return
+    ;;
+  esac
+  printf '%s\n' "${MFP_RELOGIN_MIN_INTERVAL:-21600}"
 }
 
 relogin_allowed() {

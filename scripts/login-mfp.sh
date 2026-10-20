@@ -172,8 +172,9 @@ after="$(session_token_hash)"
 meaning() {
   case "$1" in
     4) echo "no Keychain password" ;;
-    5) echo "MFP rejected the email/password" ;;
+    5) echo "MFP rejected the email/password (fields verified before submit): check the Keychain password with bin/mfpctl login --manual or a Guest-window login" ;;
     6) echo "timed out: Turnstile/captcha not cleared; try bin/mfpctl login --manual at the screen" ;;
+    9) echo "MFP rejected the login after a cookie-consent banner / field problem (inputs may have been lost); re-run bin/mfpctl login at the screen" ;;
     8) echo "login environment missing (patchright venv or Chrome); run scripts/install-mac.sh" ;;
     *) echo "unexpected error, see $LOG_FILE" ;;
   esac

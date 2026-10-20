@@ -32,8 +32,12 @@ typed into the page over patchright's pipe, and never printed, logged or put
 in an exception message.
 
 Exit codes: 0 ok, 4 no Keychain item, 5 MFP showed an explicit credentials
-error, 6 timed out (Turnstile/captcha/2FA not cleared, or a browser
-TimeoutError), 7 anything else.
+error after a clean submit (both field lengths verified right before the
+click: the password is probably wrong), 6 timed out (Turnstile/captcha/2FA or
+a cookie-consent banner not cleared, fields not accepted, or a browser
+TimeoutError), 7 anything else, 9 MFP rejected the login after a
+cookie-consent banner or a field retype (inputs may have been lost; not
+evidence of a wrong password).
 """
 
 import json
@@ -91,6 +95,24 @@ ERROR_RE = re.compile(
 ERROR_IGNORE_RE = re.compile(r"cloudflare|verif|turnstile|human", re.I)
 
 EXIT_OK, EXIT_NO_KEYCHAIN, EXIT_REJECTED, EXIT_TIMEOUT, EXIT_OTHER = 0, 4, 5, 6, 7
+EXIT_REJECTED_AFTER_CONSENT = 9
+
+# Cookie-consent banners (OneTrust / Didomi / generic). On the server Mac a
+# banner took focus or swallowed the typed fields, and the empty submit came
+# back as "Incorrect username or password".
+CONSENT_SELECTORS = [
+    "#onetrust-accept-btn-handler",
+    "#didomi-notice-agree-button",
+    "button#accept-recommended-btn-handler",
+    "[data-testid*=accept i]",
+]
+CONSENT_BUTTON_RE = re.compile(
+    r"^\s*(accept( all)?( cookies)?|allow all|agree|i agree|got it|ok|"
+    r"aceptar( todo| todas)?|acepto|permitir todo)\s*$", re.I)
+CONSENT_NEVER_RE = re.compile(
+    r"reject|rechazar|manage|settings|preferences|personalizar|configurar", re.I)
+CONSENT_IFRAMES = ('iframe[id*=sp_message]', 'iframe[title*=consent i]')
+MAX_RETYPES = 2
 
 
 class LoginError(Exception):
@@ -255,6 +277,10 @@ class Tracker:
         self.seen = {}
         self.last = "starting"
         self.asked = False
+        self.consent_seen = False  # a consent banner was found at any point
+        self.consent_stuck_told = False
+        self.retyped = False  # any field had to be retyped
+        self.retypes = {"email": 0, "password": 0}
 
     def note(self, key, state):
         if self.seen.get(key) != state:
@@ -346,6 +372,103 @@ def screenshot(page):
         pass
 
 
+def _consent_candidates(page):
+    """(description, locator-factory) pairs for every consent accept button."""
+    out = [(sel, (lambda sel=sel: page.locator(sel))) for sel in CONSENT_SELECTORS]
+    out.append(("role-button accept",
+                lambda: page.get_by_role("button", name=CONSENT_BUTTON_RE)))
+    for frame in CONSENT_IFRAMES:
+        out.append((f"{frame} accept",
+                    (lambda frame=frame: page.frame_locator(frame).get_by_role(
+                        "button", name=CONSENT_BUTTON_RE))))
+    return out
+
+
+def _visible_first(make):
+    try:
+        loc = make()
+        if loc.count() > 0 and loc.first.is_visible():
+            return loc.first
+    except Exception:
+        pass
+    return None
+
+
+def dismiss_consent(page, tracker):
+    """Click a visible cookie-consent accept button. Returns "none" (no banner),
+    "dismissed", or "stuck" (a banner is there but no click cleared it).
+    Never clicks reject/settings or anything SSO-looking."""
+    found = False
+    for desc, make in _consent_candidates(page):
+        button = _visible_first(make)
+        if button is None:
+            continue
+        try:
+            text = button.inner_text() or ""
+        except Exception:
+            text = ""
+        if CONSENT_NEVER_RE.search(text) or SSO_WORDS.search(text):
+            continue
+        found = True
+        tracker.consent_seen = True
+        try:
+            button.click()
+            page.wait_for_timeout(1000)
+        except Exception:
+            continue
+        if _visible_first(make) is None:
+            say(f"consent banner dismissed ({desc})")
+            return "dismissed"
+    if found:
+        if not tracker.consent_stuck_told:
+            tracker.consent_stuck_told = True
+            say("consent banner present but could not be dismissed; accept it in the browser window")
+        tracker.last = "consent banner"
+        return "stuck"
+    return "none"
+
+
+def clear_consent(page, tracker, deadline, timeout):
+    """Dismiss any consent banner; if it can't be dismissed, wait (the user can
+    click it in the headed window) without typing, until the deadline."""
+    while dismiss_consent(page, tracker) == "stuck":
+        if time.monotonic() >= deadline:
+            raise LoginError(EXIT_TIMEOUT, f"no MFP session after {timeout}s (last state: consent banner)")
+        page.wait_for_timeout(1000)
+
+
+def field_length(box):
+    try:
+        return len(box.input_value() or "")
+    except Exception:
+        return -1
+
+
+def verify_fields(page, tracker, fields, deadline, timeout):
+    """fields: [(name, box, value)]. Compare typed lengths (never values) and
+    retype a field that lost its input, at most MAX_RETYPES times each."""
+    for name, box, value in fields:
+        while True:
+            got = field_length(box)
+            if got == len(value):
+                tracker.note(f"len-{name}", f"{name} field length ok ({got})")
+                break
+            say(f"{name} field length mismatch (got {max(got, 0)}, expected {len(value)})")
+            tracker.seen.pop(f"len-{name}", None)
+            if tracker.retypes[name] >= MAX_RETYPES:
+                tracker.last = "fields not accepted"
+                raise LoginError(EXIT_TIMEOUT, f"no MFP session after {timeout}s (last state: fields not accepted)")
+            tracker.retypes[name] += 1
+            tracker.retyped = True
+            clear_consent(page, tracker, deadline, timeout)
+            try:
+                box.click()
+            except Exception:
+                pass
+            type_into(page, box, value)
+            page.wait_for_timeout(500)
+
+
 def login(context, page, email, password_source, timeout):
     start = time.monotonic()
     deadline = start + timeout
@@ -354,6 +477,7 @@ def login(context, page, email, password_source, timeout):
     if has_session(context) and not on_login_page(page):
         say("already logged in (profile has a live session); not filling the form")
         return
+    clear_consent(page, tracker, deadline, timeout)
     email_box, how = locate(page, EMAIL_SELECTORS)
     if email_box is None:
         if has_session(context):
@@ -378,11 +502,19 @@ def login(context, page, email, password_source, timeout):
 
     type_into(page, email_box, email)
     page.wait_for_timeout(700)
+    clear_consent(page, tracker, deadline, timeout)
     type_into(page, pw_box, password_source())
     page.wait_for_timeout(1500)
+    fields = [("email", email_box, email), ("password", pw_box, password_source())]
+    verify_fields(page, tracker, fields, deadline, timeout)
 
     if not wait_for_turnstile(page, submit, deadline, tracker):
         raise LoginError(EXIT_TIMEOUT, f"no MFP session after {timeout}s (last state: {tracker.last})")
+    # A late banner or a re-render can still clear the form: check right before
+    # the click, so a rejection after this point is about the credentials.
+    clear_consent(page, tracker, deadline, timeout)
+    verify_fields(page, tracker, fields, deadline, timeout)
+    fields = None
     submit.click()
 
     told_challenge = False
@@ -394,8 +526,14 @@ def login(context, page, email, password_source, timeout):
         banner = error_banner(page)
         if banner:
             say(f"error banner: {banner}")
+            if tracker.consent_seen or tracker.retyped:
+                say("rejected after consent banner; likely lost input, not a wrong password")
+                raise LoginError(EXIT_REJECTED_AFTER_CONSENT,
+                                 "MFP rejected the login after a consent-banner/field problem")
             raise LoginError(EXIT_REJECTED, "MFP rejected the email/password")
         login_page = on_login_page(page)
+        if login_page:
+            dismiss_consent(page, tracker)
         present = login_page and turnstile_present(page)
         solved = present and turnstile_solved(page)
         if present and not solved:

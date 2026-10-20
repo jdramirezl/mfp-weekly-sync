@@ -4,7 +4,12 @@ FAKE_PW_MODE   success | already | challenge | rejected | spanish_rejected |
                timeout | turnstile | turnstile_interactive | turnstile_stuck |
                turnstile_widget_alert | post_submit_turnstile |
                turnstile_failed | turnstile_stuck_enabled | goto_timeout |
-               manual | manual_empty
+               manual | manual_empty | consent | consent_late | consent_role |
+               consent_stuck | swallow_once | consent_then_rejected
+
+Consent modes: a cookie banner swallows typing while visible. Typed values are
+kept per field and returned by input_value(); clicking submit while a field is
+empty is recorded as "submit-with-empty-fields" (a test failure).
 FAKE_PW_LABELS comma list of get_by_label() names present
 FAKE_PW_CSS    comma list of CSS selectors present for the form fields/button
 FAKE_PW_ROLE   1 if a "Log in" role=button is present (default 1)
@@ -55,6 +60,16 @@ class State:
     login_at = None  # tick at which a pending login completes
     ts_start = None  # tick when the password was typed
     ts_reset = None  # post_submit_turnstile: tick of the first submit
+    values = {"email": "", "password": ""}
+    consent_visible = MODE in ("consent", "consent_role", "consent_stuck", "consent_then_rejected")
+    swallowed_once = False
+
+
+CONSENT_ID = "#onetrust-accept-btn-handler"
+
+
+def field_role(desc):
+    return "password" if "assword" in desc else "email"
 
 
 S = State()
@@ -145,6 +160,8 @@ class El:
     def input_value(self):
         if self.kind == "ts_input":
             return "TS-TOKEN-VALUE" if ts_solved() else ""
+        if self.kind == "field":
+            return S.values[field_role(self.desc)]
         return ""
 
     def evaluate(self, js, *args):
@@ -154,21 +171,51 @@ class El:
             return self.input_value()
         return None
 
-    def _typed(self, verb, value):
+    def _swallow(self, value):
+        if not value:
+            return False
+        if S.consent_visible:
+            return True
+        if MODE == "swallow_once" and not S.swallowed_once and field_role(self.desc) == "email":
+            S.swallowed_once = True
+            return True
+        return False
+
+    def _typed(self, verb, value, append):
+        role = field_role(self.desc)
+        if self._swallow(value):
+            rec(f"type-swallowed {self.desc}")
+            return
         rec(f"{verb} {self.desc} {value}")
-        if "assword" in self.desc and value:
+        S.values[role] = (S.values[role] + value) if append else value
+        if role == "password" and value:
             S.ts_start = S.ticks
+            if MODE == "consent_late" and not getattr(S, "late_done", False):
+                # A banner pops up after the password is typed and wipes the form.
+                S.late_done = True
+                S.consent_visible = True
+                S.values = {"email": "", "password": ""}
 
     def fill(self, value):
-        self._typed("fill", value)
+        self._typed("fill", value, append=False)
 
     def press_sequentially(self, value, delay=0):
-        self._typed("type", value)
+        self._typed("type", value, append=True)
 
     def click(self):
+        if self.kind == "consent":
+            rec(f"click-consent {self.desc}")
+            if MODE != "consent_stuck":
+                S.consent_visible = False
+            return
+        if self.kind == "reject":
+            rec(f"click-reject {self.desc}")
+            return
         if self.kind != "submit":
             rec(f"click {self.desc} {self.text}")
             return
+        if not S.values["email"] or not S.values["password"]:
+            rec("submit-with-empty-fields")
         if not button_enabled():
             rec(f"click-disabled {self.desc}")
             return
@@ -177,7 +224,8 @@ class El:
         S.submitted = True
         S.submit_tick = S.ticks
         if MODE in ("success", "turnstile", "turnstile_interactive", "turnstile_failed",
-                    "turnstile_stuck_enabled"):
+                    "turnstile_stuck_enabled", "consent", "consent_late", "consent_role",
+                    "consent_stuck", "swallow_once"):
             log_in_now()
         elif MODE == "turnstile_widget_alert":
             S.login_at = S.ticks + 2
@@ -227,6 +275,11 @@ class Page:
         return Locator([El("field", f"label={name}")] if name in LABELS else [])
 
     def get_by_role(self, role, name=None):
+        if role == "button" and name is not None and MODE == "consent_role" and S.consent_visible:
+            if name.search("Aceptar todo"):
+                return Locator([El("consent", "role-consent", "Aceptar todo")])
+            if name.search("Rechazar"):
+                return Locator([El("reject", "role-reject", "Rechazar")])
         ok = ROLE and role == "button" and name is not None and bool(name.search("Log in"))
         return Locator([submit_el("role-button")] if ok else [])
 
@@ -237,7 +290,13 @@ class Page:
             return Locator([El("ts_iframe", sel, in_ts=True)] if ts_present() else [])
         if sel == TS_BOX:
             return Locator([El("box", sel, in_ts=True)] if ts_present() else [])
+        if sel == CONSENT_ID:
+            if MODE != "consent_role" and S.consent_visible:
+                return Locator([El("consent", sel, "Accept All Cookies")])
+            return Locator([])
         if sel == "[role=alert]":
+            if MODE == "consent_then_rejected":
+                return Locator([El("text", sel, "Incorrect username or password", visible=lambda: S.submitted)])
             if MODE == "turnstile_widget_alert" and ts_present():
                 # Turnstile's own status text: must never count as a rejection.
                 return Locator([El("text", sel, "Verifying…", in_ts=True)])
@@ -271,6 +330,9 @@ class Page:
 class FrameLocator:
     def __init__(self, sel):
         self.sel = sel
+
+    def get_by_role(self, role, name=None):
+        return Locator([])
 
     def locator(self, sel):
         if self.sel == TS_IFRAME and ts_present():

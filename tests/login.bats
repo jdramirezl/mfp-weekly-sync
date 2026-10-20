@@ -119,7 +119,7 @@ cookie_out() { sed -n "s/^COOKIE_OUT=\(.*\) MODE=.*/\1/p" "$STUB_LOG" | head -n 
   echo 5 >"$STUB_DIR/login.rc"
   run "$LOGIN" --no-health
   [ "$status" -eq 5 ]
-  [[ "$output" == *"❌ Login failed (exit 5: MFP rejected the email/password)"* ]] || false
+  [[ "$output" == *"❌ Login failed (exit 5: MFP rejected the email/password (fields verified"* ]] || false
   ! grep -q tool-python "$STUB_LOG" || false
   [ -e "$STUB_DIR/loaded-com.jdrami.mfp-mcp" ]
   [ ! -e "$(cookie_out)" ]
@@ -138,6 +138,20 @@ cookie_out() { sed -n "s/^COOKIE_OUT=\(.*\) MODE=.*/\1/p" "$STUB_LOG" | head -n 
   [ "$status" -eq 6 ]
   [[ "$output" == *"Turnstile/captcha not cleared; try bin/mfpctl login --manual at the screen"* ]] || false
   [[ "$(cat "$MFP_STATE_DIR/relogin.last")" == *" 6" ]] || false
+}
+
+@test "exit 9 (consent banner) is explained and recorded" {
+  echo 9 >"$STUB_DIR/login.rc"
+  run "$LOGIN" --no-health
+  [ "$status" -eq 9 ]
+  [[ "$output" == *"MFP rejected the login after a cookie-consent banner / field problem (inputs may have been lost); re-run bin/mfpctl login at the screen"* ]] || false
+  [[ "$(cat "$MFP_STATE_DIR/relogin.last")" == *" 9" ]] || false
+}
+
+@test "exit 5 now points at the Keychain password" {
+  echo 5 >"$STUB_DIR/login.rc"
+  run "$LOGIN" --no-health
+  [[ "$output" == *"fields verified before submit"*"check the Keychain password"* ]] || false
 }
 
 @test "missing patchright venv is exit 8 with the install hint" {
@@ -239,6 +253,16 @@ allowed() { bash -c ". '$REPO_ROOT/scripts/lib/common.sh'; mfp_init_paths; relog
   run allowed
   [ "$status" -ne 0 ]
   echo "$(($(date +%s) - 3601)) 6" >"$MFP_STATE_DIR/relogin.last"
+  run allowed
+  [ "$status" -eq 0 ]
+}
+
+@test "relogin retries after 1 h after a consent-banner rejection (exit 9)" {
+  mkdir -p "$MFP_STATE_DIR"
+  echo "$(($(date +%s) - 3500)) 9" >"$MFP_STATE_DIR/relogin.last"
+  run allowed
+  [ "$status" -ne 0 ]
+  echo "$(($(date +%s) - 3601)) 9" >"$MFP_STATE_DIR/relogin.last"
   run allowed
   [ "$status" -eq 0 ]
 }
