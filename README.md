@@ -1,7 +1,8 @@
 # mfp-weekly-sync (Mason on macOS)
 
 Runs [Mason's MyFitnessPal MCP server](https://github.com/Mason-Levyy/myfitnesspal-mcp)
-(`mfp-mcp`, pinned to 0.4.1) 24/7 on a Mac as **one shared, localhost-only
+(`mfp-mcp`, pinned to upstream commit `640e79f` for the identical-entry delete
+fix, until 0.4.2 is on PyPI) 24/7 on a Mac as **one shared, localhost-only
 HTTP instance**. The [assistant-hub](docs/hub-integration.md) talks to it
 directly. ChatGPT can reach it too through OpenAI's outbound-only tunnel, which
 is optional and off by default.

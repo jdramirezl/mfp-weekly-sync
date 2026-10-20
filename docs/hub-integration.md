@@ -48,6 +48,27 @@ Suggested mapping:
 If the endpoint is down, the hub should keep working without the `fitness_*`
 tools and say so. The 6-hourly health check separately alerts you on Telegram.
 
+## Deleting identical entries and clearing a day
+
+The signature is `fitness_delete_food(query: str, meal: str | None = None, date: str | None = None)`.
+There is no `all_matches` argument for food; `fitness_delete_exercise` has
+one.
+
+- **Clear a day or a meal:**
+  1. Call `fitness_get_day(date)`.
+  2. Call `fitness_delete_food(query=<the entry's exact name>, meal=<the entry's meal>, date=<date>)`
+     once per entry.
+
+  Identical duplicates (same name, including quantity, in the same meal) are
+  interchangeable, so each call removes one of them; N entries take N calls.
+  This needs the pinned upstream commit `640e79f`. On 0.4.1 it fails with
+  "matches multiple diary entries".
+- **A single ambiguous delete:** when the matches aren't identical, for
+  example the same food at different quantities, the call errors and lists
+  the candidates. The hub should ask the user which one.
+- **Approval:** keep it approval-gated, with one approval for the whole batch,
+  not one per call.
+
 ## v2 hooks (not built yet)
 
 - **Weekly calorie report:** a step in the hub's `weekly-digest` workflow calls

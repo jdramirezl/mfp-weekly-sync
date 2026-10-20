@@ -39,7 +39,12 @@ This installs:
 - Python 3.13, through `uv python install`. Mason 0.4.1's pinned
   `pydantic-core` doesn't build on Python 3.15, so the tool is always pinned
   to 3.13. An install on another Python is rebuilt.
-- `mfp-mcp[autorefresh]==0.4.1` and Playwright Chromium
+- Mason (`mfp-mcp[autorefresh]`) pinned to upstream commit `640e79f`. That
+  commit has the fix for deleting one of two identical diary entries, which
+  0.4.1 can't do, and it isn't released yet. The pin switches back to the PyPI
+  release at 0.4.2. Installing from a commit needs `git`; if it's missing, run
+  `xcode-select --install`.
+- Playwright Chromium
 - a small separate venv with `patchright==1.64.1` for `mfpctl login`. It
   drives your installed **Google Chrome**, which must be installed; the
   script warns if it isn't.
@@ -303,7 +308,12 @@ Don't duplicate them here.
 
 1. Read Mason's changelog, and check that the new version installs on
    `MASON_PYTHON` (3.13).
-2. Bump `MFP_MCP_VERSION` in `scripts/lib/common.sh`, then run:
+2. In `scripts/lib/common.sh`, change the pin. Either bump `MFP_MCP_GIT_REF`
+   to another exact upstream commit, never a branch, or, once 0.4.2 is on
+   PyPI, set `MFP_MCP_SPEC="mfp-mcp[autorefresh]==0.4.2"` and drop the git
+   ref. The installer records the installed spec in
+   `$(uv tool dir)/mfp-mcp/.mfp-mason-spec` and reinstalls automatically
+   whenever it changes. Then run:
 
 ```bash
 scripts/install-mac.sh

@@ -5,8 +5,20 @@
 # no mapfile, no ${var,,}.
 
 # --- constants ------------------------------------------------------------
-MFP_MCP_VERSION="0.4.1"
-MFP_MCP_SPEC="mfp-mcp[autorefresh]==${MFP_MCP_VERSION}"
+# Mason is pinned to an exact UPSTREAM commit, not the PyPI release: 0.4.1
+# can't delete one of two identical diary entries ("matches multiple diary
+# entries", which broke clearing a day). Upstream fixed it in d719bc2 (#34),
+# unreleased as of 2026-10-20 (PyPI latest: 0.4.1).
+# TODO: once mfp-mcp 0.4.2 is on PyPI (https://pypi.org/project/mfp-mcp/,
+# upstream CHANGELOG.md), switch back to:
+#   MFP_MCP_SPEC="mfp-mcp[autorefresh]==0.4.2"
+# and drop MFP_MCP_GIT_REPO/MFP_MCP_GIT_REF. The installer reinstalls on its
+# own because the recorded spec changes.
+# MFP_MCP_GIT_REF must stay an exact commit, never a branch or tag.
+MFP_MCP_VERSION="0.4.1" # what the build reports (upstream pyproject at 640e79f)
+MFP_MCP_GIT_REPO="https://github.com/Mason-Levyy/myfitnesspal-mcp"
+MFP_MCP_GIT_REF="640e79f"
+MFP_MCP_SPEC="mfp-mcp[autorefresh] @ git+${MFP_MCP_GIT_REPO}@${MFP_MCP_GIT_REF}"
 # Python for the Mason tool env. 0.4.1 pins a pydantic-core that does not build
 # on Python 3.15, and Intel Homebrew has no bottles for newer Pythons.
 MASON_PYTHON="3.13"

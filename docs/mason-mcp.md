@@ -1,7 +1,9 @@
 # Using Mason's MyFitnessPal MCP
 
 [Mason-Levyy/myfitnesspal-mcp](https://github.com/Mason-Levyy/myfitnesspal-mcp)
-(PyPI `mfp-mcp`) is the MCP server this repo runs. It signs in with your
+(PyPI `mfp-mcp`) is the MCP server this repo runs. It's pinned to upstream
+commit `640e79f`, which can delete one of two identical entries, until 0.4.2
+is on PyPI. It signs in with your
 browser's MyFitnessPal cookies (the NextAuth session `__Secure-next-auth.session-token`
 plus the rest of the Cookie header)
 and calls MyFitnessPal over a Chrome TLS fingerprint (`curl_cffi`), which passes

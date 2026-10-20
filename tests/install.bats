@@ -64,8 +64,11 @@ EOF
   chmod +x "$STUB_DIR/uv"
 }
 
+SPEC='mfp-mcp[autorefresh] @ git+https://github.com/Mason-Levyy/myfitnesspal-mcp@640e79f'
+
 # Pretend mfp-mcp 0.4.1 with Playwright is already installed, on Python
-# ${1:-3.13}: the stub fails the version probe unless that's 3.13.
+# ${1:-3.13}: the stub fails the version probe unless that's 3.13. The marker
+# records which spec it came from (${2:-the pinned git spec}; "none" = no marker).
 fake_installed_tool() {
   mkdir -p "$TOOLS_DIR/mfp-mcp/bin"
   cat >"$TOOLS_DIR/mfp-mcp/bin/python" <<EOF
@@ -76,6 +79,7 @@ exit 0
 EOF
   chmod +x "$TOOLS_DIR/mfp-mcp/bin/python"
   printf 'mfp-mcp v0.4.1\n- mfp-mcp\n- myfitnesspal-mcp\n' >"$STUB_DIR/uv-list"
+  [ "${2:-}" = none ] || printf '%s\n' "${2:-$SPEC}" >"$TOOLS_DIR/mfp-mcp/.mfp-mason-spec"
 }
 
 @test "--dry-run prints the full sequence and creates nothing" {
@@ -84,7 +88,7 @@ EOF
   [[ "$output" == *"+ curl -fsSL --proto =https --tlsv1.2 -o "*"https://astral.sh/uv/0.13.1/install.sh"* ]] || false
   [[ "$output" == *"+ env UV_INSTALL_DIR=$TEST_HOME/.local/bin sh "* ]] || false
   [[ "$output" == *"/.local/bin/uv python install 3.13"* ]] || false
-  [[ "$output" == *"/.local/bin/uv tool install --force --python 3.13 mfp-mcp\[autorefresh\]==0.4.1"* ]] || false
+  printf '%s\n' "$output" | grep -qF '/.local/bin/uv tool install --force --python 3.13 mfp-mcp\[autorefresh\]\ @\ git+https://github.com/Mason-Levyy/myfitnesspal-mcp@640e79f'
   [[ "$output" != *"brew install uv"* ]] || false
   [[ "$output" == *"-m playwright install chromium"* ]] || false
   [[ "$output" == *"+ chmod 700"*"myfitnesspal-mcp"* ]] || false
@@ -100,7 +104,7 @@ EOF
   run "$INSTALL"
   [ "$status" -eq 0 ]
   grep -qx 'uv python install 3.13' "$STUB_LOG"
-  grep -qx 'uv tool install --force --python 3.13 mfp-mcp\[autorefresh\]==0.4.1' "$STUB_LOG"
+  grep -qxF "uv tool install --force --python 3.13 $SPEC" "$STUB_LOG"
   grep -q 'tool-python -m playwright install chromium' "$STUB_LOG"
   ! grep -q 'brew install' "$STUB_LOG" # uv already present || false
   [ "$(file_mode "$MFP_MCP_DATA_DIR")" = 700 ]
@@ -144,7 +148,7 @@ EOF
   grep -q "^curl -fsSL --proto =https --tlsv1.2 -o .* https://astral.sh/uv/0.13.1/install.sh$" "$STUB_LOG"
   grep -q "^sh .*uv-install\.[A-Za-z0-9]* \[UV_INSTALL_DIR=$TEST_HOME/.local/bin\]$" "$STUB_LOG"
   [ -x "$TEST_HOME/.local/bin/uv" ]
-  grep -qx 'uv tool install --force --python 3.13 mfp-mcp\[autorefresh\]==0.4.1' "$STUB_LOG"
+  grep -qxF "uv tool install --force --python 3.13 $SPEC" "$STUB_LOG"
   ! grep -q '^brew' "$STUB_LOG" || false
   # the downloaded installer is cleaned up
   ! ls "${TMPDIR:-/tmp}"/uv-install.* 2>/dev/null | xargs grep -l '# uv installer' 2>/dev/null | grep -q . || false
@@ -166,7 +170,7 @@ EOF
   fake_installed_tool 3.15
   run "$INSTALL"
   [ "$status" -eq 0 ]
-  grep -qx 'uv tool install --force --python 3.13 mfp-mcp\[autorefresh\]==0.4.1' "$STUB_LOG"
+  grep -qxF "uv tool install --force --python 3.13 $SPEC" "$STUB_LOG"
 }
 
 @test "no Homebrew is fine by default" {
@@ -317,4 +321,85 @@ EOF
   run "$INSTALL"
   [ "$status" -eq 0 ]
   [[ "$output" == *"Google Chrome not found"*"needed for mfpctl login"* ]] || false
+}
+
+# A uv stub variant that records each argv element on its own line, to prove
+# the git spec reaches uv as ONE argument.
+stub_uv_argv() {
+  stub_uv
+  mv "$STUB_DIR/uv" "$STUB_DIR/uv.inner"
+  cat >"$STUB_DIR/uv" <<'EOF'
+#!/bin/bash
+if [ "$1 $2" = "tool install" ]; then
+  : >"$STUB_DIR/uv-install-argv"
+  for a in "$@"; do printf '[%s]\n' "$a" >>"$STUB_DIR/uv-install-argv"; done
+fi
+exec "$STUB_DIR/uv.inner" "$@"
+EOF
+  chmod +x "$STUB_DIR/uv"
+}
+
+@test "fresh install passes the pinned git spec as one argument and writes the marker" {
+  stub_uv_argv
+  run "$INSTALL"
+  [ "$status" -eq 0 ]
+  grep -qxF "[$SPEC]" "$STUB_DIR/uv-install-argv"
+  [ "$(cat "$TOOLS_DIR/mfp-mcp/.mfp-mason-spec")" = "$SPEC" ]
+}
+
+@test "a correct git install (matching marker, 3.13, Playwright) is a no-op" {
+  stub_uv
+  fake_installed_tool 3.13
+  run "$INSTALL"
+  [ "$status" -eq 0 ]
+  ! grep -q 'uv tool install' "$STUB_LOG" || false
+}
+
+@test "an existing PyPI 0.4.1 install without a marker is reinstalled from git" {
+  stub_uv
+  fake_installed_tool 3.13 none
+  run "$INSTALL"
+  [ "$status" -eq 0 ]
+  grep -qxF "uv tool install --force --python 3.13 $SPEC" "$STUB_LOG"
+  [ "$(cat "$TOOLS_DIR/mfp-mcp/.mfp-mason-spec")" = "$SPEC" ]
+}
+
+@test "a marker for a different spec triggers a reinstall" {
+  stub_uv
+  fake_installed_tool 3.13 'mfp-mcp[autorefresh]==0.4.1'
+  run "$INSTALL"
+  [ "$status" -eq 0 ]
+  grep -qxF "uv tool install --force --python 3.13 $SPEC" "$STUB_LOG"
+}
+
+@test "--dry-run shows the git spec and writes no marker" {
+  stub_uv
+  run "$INSTALL" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"git+https://github.com/Mason-Levyy/myfitnesspal-mcp@640e79f"* ]] || false
+  [ ! -e "$TOOLS_DIR/mfp-mcp/.mfp-mason-spec" ]
+}
+
+@test "missing git fails with the xcode-select hint when an install is needed" {
+  stub_uv
+  stub git 127
+  run "$INSTALL"
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"git is required to install the pinned Mason commit"*"xcode-select --install"* ]] || false
+  ! grep -q 'uv tool install' "$STUB_LOG" || false
+}
+
+@test "missing git is fine when the pinned install is already correct" {
+  stub_uv
+  fake_installed_tool 3.13
+  stub git 127
+  run "$INSTALL"
+  [ "$status" -eq 0 ]
+}
+
+@test "the Mason pin is an exact commit with a note to return to PyPI 0.4.2" {
+  ref="$(sed -n 's/^MFP_MCP_GIT_REF="\(.*\)"$/\1/p' "$REPO_ROOT/scripts/lib/common.sh")"
+  [[ "$ref" =~ ^[0-9a-f]{7,40}$ ]] || false
+  grep -q 'mfp-mcp\[autorefresh\]==0.4.2' "$REPO_ROOT/scripts/lib/common.sh"
+  ! grep -rn 'uvx --from' "$REPO_ROOT/scripts" "$REPO_ROOT/bin" || false
 }

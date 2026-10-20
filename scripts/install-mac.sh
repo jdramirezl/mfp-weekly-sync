@@ -95,11 +95,15 @@ TOOL_DIR=""
 [ -x "$UV" ] && TOOL_DIR="$("$UV" tool dir 2>/dev/null || true)"
 [ -n "$TOOL_DIR" ] || TOOL_DIR="$MFP_HOME/.local/share/uv/tools"
 TOOL_PY="$TOOL_DIR/mfp-mcp/bin/python"
+# uv reports the same "mfp-mcp v0.4.1" for the PyPI and the git build, so the
+# exact spec that was installed is recorded next to the tool.
+SPEC_MARKER="$TOOL_DIR/mfp-mcp/.mfp-mason-spec"
 
 mason_installed() {
   [ -x "$UV" ] || return 1
   "$UV" tool list 2>/dev/null | grep -Eq "^mfp-mcp v${MFP_MCP_VERSION}( |\$)" || return 1
   [ -x "$TOOL_PY" ] || return 1
+  [ "$(cat "$SPEC_MARKER" 2>/dev/null)" = "$MFP_MCP_SPEC" ] || return 1
   # Built on the pinned Python (an earlier install may have used 3.15).
   "$TOOL_PY" -c "import sys; raise SystemExit(sys.version_info[:2] != tuple(int(x) for x in '$MASON_PYTHON'.split('.')))" >/dev/null 2>&1 || return 1
   # The autorefresh extra brings Playwright into the tool's own environment.
@@ -107,9 +111,20 @@ mason_installed() {
 }
 
 if mason_installed; then
-  log "mfp-mcp ${MFP_MCP_VERSION} (autorefresh, Python ${MASON_PYTHON}) already installed"
+  log "mfp-mcp ${MFP_MCP_VERSION} @ ${MFP_MCP_GIT_REF:-pypi} (autorefresh, Python ${MASON_PYTHON}) already installed"
 else
+  case "$MFP_MCP_SPEC" in
+    *git+*)
+      if ! git --version >/dev/null 2>&1; then
+        die "git is required to install the pinned Mason commit; run: xcode-select --install"
+      fi
+      ;;
+  esac
   run "$UV" tool install --force --python "$MASON_PYTHON" "$MFP_MCP_SPEC"
+  if [ "$DRY_RUN" != 1 ]; then
+    mkdir -p "$(dirname "$SPEC_MARKER")"
+    printf '%s\n' "$MFP_MCP_SPEC" >"$SPEC_MARKER"
+  fi
 fi
 
 # 3. Headless Chromium for session auto-refresh. Use the tool's own Python so
