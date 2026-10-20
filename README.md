@@ -43,7 +43,8 @@ scripts/install-mac.sh --username <mfp username>   # add --with-tunnel for ChatG
 # Recommended: the bot's own login (runbook step 4): MFP_LOGIN_EMAIL in mason.env, then
 security add-generic-password -s mfp-login -a 'you@example.com' -w   # prompts for the password
 bin/mfpctl login                  # at the Mac's screen: drives installed Chrome; click the Cloudflare box if shown
-#   if Cloudflare still fails: bin/mfpctl login --manual   (log in by hand in Chrome, then ⌘Q)
+#   if Cloudflare still fails: log in (email + password) in a Chrome GUEST window, copy the full
+#   Cookie request header, then: pbpaste | bin/mfp-auth   (or: bin/mfpctl login --manual)
 # Fallback: pbpaste | bin/mfp-auth   (after copying the full Cookie request header)
 bin/mfpctl install
 sleep 20 && bin/mfpctl status     # Mason takes ~10 s to start

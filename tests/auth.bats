@@ -166,3 +166,25 @@ HEADER_CLEAN='__Secure-next-auth.session-token=abc.SECRETTOKEN.def==; __cf_bm=x=
   [[ "$output" == *"Do not log out of MyFitnessPal in that browser"* ]] || false
   [[ "$output" == *"not recommended"* ]] || false
 }
+
+@test "__Host- cookies are dropped before Mason sees them; only the count is logged" {
+  printf 'Cookie: __Secure-next-auth.session-token=abc.SECRETTOKEN; __Host-next-auth.csrf-token=SECRETCSRF%%7Cx; _ga=GA1.SECRETGA; __Host-other=SECRETH2; p=1' >"$BATS_TEST_TMPDIR/header"
+  run bash -c "'$AUTH' --username jdr <'$BATS_TEST_TMPDIR/header'"
+  [ "$status" -eq 0 ]
+  [ "$(cat "$STUB_DIR/auth-stdin")" = "__Secure-next-auth.session-token=abc.SECRETTOKEN; _ga=GA1.SECRETGA; p=1" ]
+  [[ "$output" == *"5 cookies"* ]] || false
+  [[ "$output" == *"Dropped 2 __Host- cookies"* ]] || false
+  [[ "$output" != *SECRET* ]] || false
+  [[ "$output" != *"__Host-next-auth"* ]] || false
+}
+
+@test "input without __Host- cookies passes through unchanged and logs no drop" {
+  write_header
+  run bash -c "'$AUTH' --username jdr <'$BATS_TEST_TMPDIR/header'"
+  [[ "$output" != *"Dropped"* ]] || false
+}
+
+@test "--help recommends the Chrome Guest window method" {
+  run "$AUTH" --help
+  [[ "$output" == *"Guest"* ]] || false
+}

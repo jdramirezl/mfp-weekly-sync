@@ -19,7 +19,10 @@ usage() {
   cat <<'EOF'
 Usage: pbpaste | bin/mfp-auth [--username NAME] [--no-restart] [--dry-run]
 
-Copy the full Cookie request header, then pipe it in:
+Best: do this in a Chrome GUEST window (profile menu -> Guest), logging in
+with email + password. That makes a fresh session only the bot holds; close
+the Guest window afterwards (don't log out). Then copy the full Cookie
+request header and pipe it in:
 
   1. On myfitnesspal.com, logged in, open DevTools (Option-Cmd-I) -> Network.
   2. Reload the page and select the www.myfitnesspal.com document request.
@@ -33,7 +36,7 @@ Copy the full Cookie request header, then pipe it in:
   --dry-run        Validate the input and show what would run; change nothing.
 
 Do not log out of MyFitnessPal in that browser afterwards: logging out ends
-the session Mason now uses. Closing the tab is fine.
+the session Mason now uses. Closing the tab or the Guest window is fine.
 
 Pasting only the __Secure-next-auth.session-token value is not recommended;
 MFP may reject it within minutes.
@@ -92,6 +95,25 @@ case "$cookie" in
   *) ncookies=1 ;;
 esac
 log "Input received (${#cookie} characters, ${ncookies} cookies). Validating…"
+# Drop __Host- cookies (e.g. __Host-next-auth.csrf-token). Mason seeds its
+# autorefresh browser profile with Domain=.myfitnesspal.com on every cookie,
+# and Chromium rejects the WHOLE batch for a __Host- cookie with a Domain
+# ("Invalid cookie fields"). They aren't needed for the session.
+case "$cookie" in
+  *__Host-*=*)
+    kept="$(printf '%s' "$cookie" | awk 'BEGIN { RS = ";"; n = 0 }
+      { sub(/^[ \t\n]+/, ""); sub(/[ \t\n]+$/, "")
+        if ($0 == "" || $0 ~ /^__Host-/) next
+        printf "%s%s", (n++ ? "; " : ""), $0 }')"
+    dropped="$(printf '%s' "$cookie" | tr ';' '\n' | sed 's/^[[:space:]]*//' | grep -c '^__Host-' || true)"
+    if [ "$dropped" -gt 0 ]; then
+      cookie="$kept"
+      log "Dropped ${dropped} __Host- cookies (Chromium rejects them when seeding Mason's profile; not needed for the session)."
+    fi
+    [ -n "$cookie" ] || die "only __Host- cookies were pasted; copy the whole Cookie request header"
+    ;;
+esac
+
 if [ "$ncookies" -le 1 ]; then
   warn "Only one cookie received. For SSO (Google/Apple) accounts a lone session token is often rejected within minutes. Copy the whole Cookie request header instead: DevTools → Network → www.myfitnesspal.com → Request Headers → cookie → Copy value."
 fi

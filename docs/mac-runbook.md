@@ -118,8 +118,26 @@ on your phone.**
 
 5. **Check it:** `bin/mfpctl status` and `bin/mfpctl health`.
 
-**If Cloudflare still fails: `bin/mfpctl login --manual`.** This opens plain
-Google Chrome on the same login profile, with no automation attached:
+**If Cloudflare still fails, the recommended manual path is a Chrome Guest
+window and the full Cookie header.** This worked on setup day. A Guest window
+starts with no cookies, so logging in there creates a **fresh session that only
+the bot holds**: your normal browser and phone sessions are separate from it.
+
+1. In Google Chrome, open the profile menu (top right) and choose **Guest**.
+2. Go to myfitnesspal.com and log in with **email + password**, not Google.
+   Solve the Cloudflare box.
+3. Open DevTools (⌥⌘I), then **Network**, and reload. Select the
+   `www.myfitnesspal.com` document request. Under **Request Headers**,
+   right-click `cookie` and choose **Copy value**.
+4. In Terminal: `pbpaste | bin/mfp-auth --username <mfp username>`. It prints
+   `✅ Connected as <you>`. It drops `__Host-` cookies such as the CSRF token,
+   which Chromium refuses when seeding Mason's profile, and reports only how
+   many it dropped.
+5. Close the Guest window. That discards Chrome's copy. **Don't click Log out**,
+   because that would end the bot's session.
+
+**Alternative: `bin/mfpctl login --manual`.** This opens plain Google Chrome on
+the bot's login profile, with no automation attached:
 
 1. At the Mac's screen, run `bin/mfpctl login --manual`.
 2. In the Chrome window that opens, log in to MyFitnessPal with email and
@@ -148,8 +166,10 @@ health check would then re-login automatically within 6 hours (see
 
 ### Fallback: paste a browser cookie
 
-Use this only if the password login isn't possible. The session stays tied to
-your browser, so expect periodic re-auth.
+Use this only if the password login isn't possible. If you copy the cookie from
+your everyday browser, the session stays tied to that browser, so expect
+periodic re-auth. If your account has a password, prefer the Guest-window
+method above, which gives the bot its own session.
 
 Copy the **full Cookie request header**, not just the session token:
 
@@ -388,6 +408,9 @@ What this repo adds so the session doesn't age out while nobody's using it:
   probably waiting. Look for it on the Mac's screen and click **Always Allow**.
 - **A login window is stuck:** quit that Chrome window (⌘Q) and re-run
   `bin/mfpctl login`.
+- **`Invalid cookie fields` / seeding Mason's profile failed:** a `__Host-`
+  cookie was passed with a Domain. `bin/mfp-auth`, `mfpctl login` and
+  `save_session.py` now drop `__Host-` cookies, so re-run the auth.
 - **A stale or broken login profile:** delete
   `~/Library/Application Support/mfp-mason/login-profile` and log in again.
   This doesn't touch Mason's own session or profile.

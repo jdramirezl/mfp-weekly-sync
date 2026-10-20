@@ -42,3 +42,12 @@ setup() {
   run /usr/bin/python3 "$SAVE"
   [ "$status" -eq 1 ]
 }
+
+@test "__Host- cookies are dropped before save_cookies and seed_profile" {
+  printf '{"cookies":{"__Secure-next-auth.session-token":"S","__Host-next-auth.csrf-token":"C","_ga":"x"}}' >"$MFP_COOKIE_IN"
+  run /usr/bin/python3 "$SAVE"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Dropped 1 __Host- cookies"* ]] || false
+  ! grep -q '__Host-' "$FAKE_SAVE_FILE" || false
+  [ "$(cat "$FAKE_SEED_FILE")" = 2 ]
+}

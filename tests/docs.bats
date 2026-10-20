@@ -55,3 +55,8 @@ doc_files() {
   grep -q 'Always Allow' "$REPO_ROOT/docs/mac-runbook.md"
   grep -q 'mfpctl login' "$REPO_ROOT/README.md"
 }
+
+@test "runbook documents the Guest-window manual path" {
+  grep -q 'Guest' "$REPO_ROOT/docs/mac-runbook.md"
+  grep -q '__Host-' "$REPO_ROOT/docs/mac-runbook.md"
+}

@@ -438,6 +438,14 @@ def harvest(context, out_path):
     }
     if SESSION_COOKIE not in cookies:
         return 0
+    # __Host- cookies (the NextAuth CSRF token) must have no Domain, but Mason
+    # seeds its profile with Domain=.myfitnesspal.com and Chromium then rejects
+    # the whole batch. Not needed for the session.
+    host = [n for n in cookies if n.startswith("__Host-")]
+    for n in host:
+        del cookies[n]
+    if host:
+        say(f"Dropped {len(host)} __Host- cookies.")
     fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
     with os.fdopen(fd, "w") as fh:
         json.dump({"cookies": cookies}, fh)

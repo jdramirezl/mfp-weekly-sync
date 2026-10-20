@@ -289,6 +289,7 @@ class Context:
                 {"name": "other", "value": "x", "domain": ".example.com"}]
         if S.logged_in:
             base += [{"name": SESSION, "value": "SESSION-VALUE", "domain": "www.myfitnesspal.com"},
+                     {"name": "__Host-next-auth.csrf-token", "value": "CSRF", "domain": "www.myfitnesspal.com"},
                      {"name": "__cf_bm", "value": "cf", "domain": ".myfitnesspal.com"}]
         return base
 

@@ -30,7 +30,10 @@ claude mcp add --transport http myfitnesspal http://127.0.0.1:8484/mcp
   saves it and retries the call.
 - **Recommended: give the bot its own login** with `bin/mfpctl login`. It
   drives the installed Google Chrome through patchright, because Cloudflare
-  Turnstile blocks Mason's bundled Chromium, and falls back to
+  Turnstile blocks Mason's bundled Chromium. The manual fallback is to log in
+  with email and password in a Chrome Guest window, then
+  `pbpaste | bin/mfp-auth` with the full Cookie header. That is a fresh
+  session only the bot holds; `__Host-` cookies are dropped. Another option is
   `bin/mfpctl login --manual`. It uses
   `MFP_LOGIN_EMAIL` plus the Keychain item `mfp-login`. A cookie copied from
   your browser shares one session lineage with it, so whichever side refreshes

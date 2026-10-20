@@ -30,6 +30,15 @@ def main():
         say("harvested cookies have no MFP session; nothing saved")
         return 1
 
+    # Defence in depth (mfp_login.py and mfp-auth already drop them): a
+    # __Host- cookie seeded with a Domain makes Chromium reject the whole
+    # batch in refresh.seed_profile ("Invalid cookie fields").
+    host = [n for n in cookies if n.startswith("__Host-")]
+    for n in host:
+        del cookies[n]
+    if host:
+        say(f"Dropped {len(host)} __Host- cookies.")
+
     from myfitnesspal_mcp import auth, refresh
 
     try:

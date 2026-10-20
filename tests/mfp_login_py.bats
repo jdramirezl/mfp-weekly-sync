@@ -39,6 +39,8 @@ py() { /usr/bin/python3 "$LOGIN_PY" "$@"; }
   grep -q '"__Secure-next-auth.session-token": "SESSION-VALUE"' "$OUT"
   grep -q '"__cf_bm"' "$OUT"
   ! grep -q '"other"' "$OUT" || false
+  ! grep -q '__Host-' "$OUT" || false
+  [[ "$output" == *"Dropped 1 __Host- cookies"* ]] || false
   [ "$(file_mode "$OUT")" = 600 ]
   [ "$(file_mode "$MFP_LOGIN_PROFILE")" = 700 ]
   grep -qx close "$FAKE_PW_LOG"
