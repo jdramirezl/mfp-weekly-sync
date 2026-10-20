@@ -30,10 +30,12 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 . "$SCRIPT_DIR/lib/common.sh"
 
 SIMULATE=""
+NO_HEAL=0
 WAIT=0
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --no-heal) export NO_HEAL=1 ;;
     --simulate-fail)
       SIMULATE="${2:-}"
       shift

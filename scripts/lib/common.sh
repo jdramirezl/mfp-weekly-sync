@@ -159,6 +159,65 @@ configured_username() {
   printf '%s\n' "$u"
 }
 
+# --- Mason stop/restart around exclusive use of its Chromium profile -----------
+# mason_stop_for_profile : if Mason is loaded, boot it out and wait until it is
+# gone (Chromium holds a lock on the profile). Remembers whether to restore.
+MASON_WAS_LOADED=0
+mason_stop_for_profile() {
+  local domain i=0
+  domain="gui/$(id -u)"
+  MASON_WAS_LOADED=0
+  launchctl print "$domain/$LABEL_MASON" >/dev/null 2>&1 || return 0
+  MASON_WAS_LOADED=1
+  launchctl bootout "$domain/$LABEL_MASON" 2>/dev/null || true
+  while launchctl print "$domain/$LABEL_MASON" >/dev/null 2>&1 && [ "$i" -lt 20 ]; do
+    sleep 0.5
+    i=$((i + 1))
+  done
+}
+
+# mason_restore : restart Mason if mason_stop_for_profile stopped it. Safe to
+# call twice (e.g. explicitly and again from an EXIT trap).
+mason_restore() {
+  local domain i
+  [ "$MASON_WAS_LOADED" = 1 ] || return 0
+  MASON_WAS_LOADED=0
+  domain="gui/$(id -u)"
+  for i in 1 2 3; do
+    launchctl bootstrap "$domain" "$LAUNCH_AGENTS_DIR/$LABEL_MASON.plist" 2>/dev/null && return 0
+    sleep 1
+  done
+  warn "could not restart $LABEL_MASON; run: bin/mfpctl start"
+}
+
+# --- bot-owned password login --------------------------------------------------
+LOGIN_KEYCHAIN_SERVICE="${MFP_LOGIN_KEYCHAIN_SERVICE:-mfp-login}"
+
+# keychain_has_login EMAIL : the Keychain item exists. No -w, so the secret is
+# never read here.
+keychain_has_login() {
+  [ -n "${1:-}" ] || return 1
+  security find-generic-password -s "$LOGIN_KEYCHAIN_SERVICE" -a "$1" >/dev/null 2>&1
+}
+
+# relogin_allowed : at most one password re-login per MFP_RELOGIN_MIN_INTERVAL
+# seconds (default 6 h) so MFP doesn't flag the account.
+relogin_allowed() {
+  local f="$MFP_STATE_DIR/relogin.last" last now
+  [ -f "$f" ] || return 0
+  last="$(cat "$f" 2>/dev/null || echo 0)"
+  case "$last" in '' | *[!0-9]*) return 0 ;; esac
+  now="$(date +%s)"
+  [ $((now - last)) -ge "${MFP_RELOGIN_MIN_INTERVAL:-21600}" ]
+}
+
+# relogin_next_hhmm : local HH:MM when the next re-login is allowed.
+relogin_next_hhmm() {
+  local last
+  last="$(cat "$MFP_STATE_DIR/relogin.last" 2>/dev/null || echo 0)"
+  date -r $((last + ${MFP_RELOGIN_MIN_INTERVAL:-21600})) '+%H:%M' 2>/dev/null || echo '?'
+}
+
 USERNAME_HINT="SSO/email MyFitnessPal logins need MFP_USERNAME (your MFP username, not email): put MFP_USERNAME=<name> in ~/.config/mfp-mason/mason.env (chmod 600), then run: bin/mfpctl restart"
 
 # --- env files --------------------------------------------------------------
@@ -188,7 +247,7 @@ load_env_file() {
 }
 
 # Non-secret Mason tuning, rendered into the service at install time.
-MASON_ENV_KEYS="MFP_IMPERSONATE MFP_USERNAME MFP_SYNC_DAYS"
+MASON_ENV_KEYS="MFP_IMPERSONATE MFP_USERNAME MFP_SYNC_DAYS MFP_LOGIN_EMAIL"
 
 load_mason_env() {
   local f="$MFP_CONFIG_DIR/mason.env"

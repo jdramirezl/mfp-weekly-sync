@@ -120,4 +120,18 @@ EOF
 
 calls() { cat "$STUB_LOG"; }
 
+# security stub: records argv; exits $STUB_DIR/security.rc (default 0); with
+# -w prints a fake password (tests assert it never leaks anywhere).
+stub_security() {
+  cat >"$STUB_DIR/security" <<'EOF'
+#!/bin/bash
+printf 'security' >>"$STUB_LOG"; for a in "$@"; do printf ' %s' "$a" >>"$STUB_LOG"; done; printf '\n' >>"$STUB_LOG"
+rc="$(cat "$STUB_DIR/security.rc" 2>/dev/null || echo 0)"
+[ "$rc" = 0 ] || exit "$rc"
+for a in "$@"; do [ "$a" = -w ] && echo "FAKE-PASSWORD-SECRET"; done
+exit 0
+EOF
+  chmod +x "$STUB_DIR/security"
+}
+
 file_mode() { stat -f %Lp "$1"; }

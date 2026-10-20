@@ -16,7 +16,7 @@
 # profile or keep a stale cached client, and it is ALWAYS restarted afterwards.
 # Only an 8-character hash of the token is logged, never the token itself.
 #
-# Usage: refresh-session.sh [--dry-run]
+# Usage: refresh-session.sh [--dry-run] [--no-health]
 # Exit status: non-zero only when the refresh itself failed.
 set -euo pipefail
 
@@ -24,9 +24,11 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 # shellcheck source=lib/common.sh
 . "$SCRIPT_DIR/lib/common.sh"
 
+RUN_HEALTH=1
 while [ $# -gt 0 ]; do
   case "$1" in
     --dry-run) DRY_RUN=1 ;;
+    --no-health) RUN_HEALTH=0 ;;
     -h | --help)
       sed -n '2,/^set -euo/p' "$0" | sed -e '$d' -e 's/^# \{0,1\}//'
       exit 0
@@ -61,35 +63,14 @@ if [ "$DRY_RUN" = 1 ]; then
   launchctl print "$DOMAIN/$LABEL_MASON" >/dev/null 2>&1 && printf '+ launchctl bootout %s/%s\n' "$DOMAIN" "$LABEL_MASON"
   printf '+ %q -c <refresh.refresh_session()>\n' "$TOOL_PY"
   printf '+ launchctl bootstrap %s %q (if it was loaded)\n' "$DOMAIN" "$MASON_PLIST"
-  printf '+ health-check.sh --wait 120\n'
+  [ "$RUN_HEALTH" = 1 ] && printf '+ health-check.sh --wait 120 --no-heal\n'
   exit 0
 fi
 
 mkdir -p "$MFP_LOG_DIR"
 
-was_loaded=0
-restore_mason() {
-  [ "$was_loaded" = 1 ] || return 0
-  local i
-  for i in 1 2 3; do
-    launchctl bootstrap "$DOMAIN" "$MASON_PLIST" 2>/dev/null && return 0
-    sleep 1
-  done
-  warn "could not restart $LABEL_MASON; run: bin/mfpctl start"
-}
-trap restore_mason EXIT
-
-if launchctl print "$DOMAIN/$LABEL_MASON" >/dev/null 2>&1; then
-  was_loaded=1
-  launchctl bootout "$DOMAIN/$LABEL_MASON" 2>/dev/null || true
-  # bootout returns before the process is gone; wait so Chromium's profile
-  # lock is free.
-  i=0
-  while launchctl print "$DOMAIN/$LABEL_MASON" >/dev/null 2>&1 && [ "$i" -lt 20 ]; do
-    sleep 0.5
-    i=$((i + 1))
-  done
-fi
+trap mason_restore EXIT
+mason_stop_for_profile
 
 rc=0
 MFP_MCP_DATA_DIR="$MFP_MCP_DATA_DIR" MFP_USERNAME="${MFP_USERNAME:-}" "$TOOL_PY" -c '
@@ -113,9 +94,11 @@ else
   record "refresh ok; rotated: no (token unchanged, $after)"
 fi
 
-restore_mason
-was_loaded=0
+mason_restore
 
 # Confirm the session still works; alerts on Telegram only if state changed.
-/bin/bash "$SCRIPT_DIR/health-check.sh" --wait 120 || true
+# --no-heal: this script is itself part of the healing path.
+if [ "$RUN_HEALTH" = 1 ]; then
+  /bin/bash "$SCRIPT_DIR/health-check.sh" --wait 120 --no-heal || true
+fi
 exit "$rc"
