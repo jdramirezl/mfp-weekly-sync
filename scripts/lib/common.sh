@@ -13,6 +13,10 @@ MASON_PYTHON="3.13"
 # Standalone uv installer, pinned (https://github.com/astral-sh/uv/releases).
 UV_VERSION="0.13.1"
 LABEL_REFRESH="com.jdrami.mfp-refresh"
+# Login browser: patchright (undetected Playwright) driving the INSTALLED Google
+# Chrome. Stock Playwright Chromium is flagged by Cloudflare Turnstile.
+PATCHRIGHT_VERSION="1.64.1"
+LOGIN_URL="https://www.myfitnesspal.com/account/login"
 LABEL_MASON="com.jdrami.mfp-mcp"
 LABEL_HEALTH="com.jdrami.mfp-health"
 LABEL_TUNNEL="com.jdrami.mfp-tunnel"
@@ -35,6 +39,8 @@ mfp_init_paths() {
   MFP_STATE_DIR="${MFP_STATE_DIR:-$MFP_HOME/Library/Application Support/mfp-mason}"
   MFP_CONFIG_DIR="${MFP_CONFIG_DIR:-$MFP_HOME/.config/mfp-mason}"
   MFP_LOG_DIR="${MFP_LOG_DIR:-$MFP_HOME/Library/Logs/mfp-mason}"
+  LOGIN_VENV="${MFP_LOGIN_VENV:-$MFP_STATE_DIR/login-venv}"
+  LOGIN_PROFILE="${MFP_LOGIN_PROFILE:-$MFP_STATE_DIR/login-profile}"
   MFP_HOST="${MFP_HOST:-$REQUIRED_HOST}"
   MFP_PORT="${MFP_PORT:-8484}"
   TUNNEL_HEALTH_ADDR="${TUNNEL_HEALTH_ADDR:-127.0.0.1:8080}"
@@ -123,6 +129,29 @@ resolve_tool_python() {
     return
   fi
   printf '%s\n' "$MFP_HOME/.local/share/uv/tools/mfp-mcp/bin/python"
+}
+
+# resolve_login_python : Python of the patchright login venv.
+resolve_login_python() {
+  if [ -n "${MFP_LOGIN_PY:-}" ]; then
+    printf '%s\n' "$MFP_LOGIN_PY"
+  else
+    printf '%s\n' "$LOGIN_VENV/bin/python"
+  fi
+}
+
+# login_venv_ok PY : the venv has exactly the pinned patchright.
+login_venv_ok() {
+  [ -x "$1" ] && "$1" -c "import importlib.metadata as m, sys; sys.exit(m.version('patchright') != '$PATCHRIGHT_VERSION')" >/dev/null 2>&1
+}
+
+# chrome_installed : Google Chrome.app exists (patchright uses channel="chrome").
+chrome_installed() {
+  if [ -n "${MFP_CHROME_APP:-}" ]; then
+    [ -d "$MFP_CHROME_APP" ]
+    return
+  fi
+  [ -d "/Applications/Google Chrome.app" ] || [ -d "$HOME/Applications/Google Chrome.app" ]
 }
 
 # --- Mason session metadata (never prints secrets) ------------------------------

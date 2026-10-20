@@ -32,7 +32,7 @@ test: $(BATS)
 
 lint: $(SHELLCHECK)
 	$(SHELLCHECK) -x $(SH_FILES)
-	python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' scripts/mfp_login.py tests/fakepy/playwright/sync_api.py tests/fakepy/myfitnesspal_mcp/auth.py
+	python3 -c 'import ast, sys; [ast.parse(open(f).read(), f) for f in sys.argv[1:]]' scripts/mfp_login.py scripts/save_session.py tests/fakepy/playwright/sync_api.py tests/fakepy/patchright/sync_api.py tests/fakepy/myfitnesspal_mcp/auth.py tests/fakepy/myfitnesspal_mcp/refresh.py
 	@if [ -x scripts/dev/lint-plists.sh ]; then scripts/dev/lint-plists.sh; fi
 
 verify: lint test

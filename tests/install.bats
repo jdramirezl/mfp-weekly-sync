@@ -6,6 +6,9 @@ load helpers
 setup() {
   common_setup
   INSTALL="$REPO_ROOT/scripts/install-mac.sh"
+  LOGIN_VENV="$MFP_STATE_DIR/login-venv"
+  export MFP_CHROME_APP="$TEST_HOME/Applications/Google Chrome.app"
+  mkdir -p "$MFP_CHROME_APP"
   TOOLS_DIR="$TEST_HOME/uv-tools"
   cat >"$STUB_DIR/brew" <<'EOF'
 #!/bin/bash
@@ -41,6 +44,16 @@ stub_uv() {
 printf 'uv' >>"\$STUB_LOG"; for a in "\$@"; do printf ' %s' "\$a" >>"\$STUB_LOG"; done; printf '\n' >>"\$STUB_LOG"
 if [ "\$1 \$2" = "tool dir" ]; then echo "$TOOLS_DIR"; exit 0; fi
 if [ "\$1 \$2" = "tool list" ]; then cat "\$STUB_DIR/uv-list" 2>/dev/null; exit 0; fi
+if [ "\$1" = venv ]; then
+  vdir="\${@: -1}"; mkdir -p "\$vdir/bin"
+  cat >"\$vdir/bin/python" <<'PYEOF'
+#!/bin/bash
+printf 'login-python %s\\n' "\$*" >>"\$STUB_LOG"
+case "\$*" in *patchright*) v="\$(cat "\$STUB_DIR/patchright-version" 2>/dev/null)"; [ "\$v" = 1.64.1 ] ;; *) exit 0 ;; esac
+PYEOF
+  chmod +x "\$vdir/bin/python"
+fi
+if [ "\$1 \$2" = "pip install" ]; then echo 1.64.1 >"\$STUB_DIR/patchright-version"; fi
 if [ "\$1 \$2" = "tool install" ]; then
   mkdir -p "$TOOLS_DIR/mfp-mcp/bin"
   printf '#!/bin/bash\nprintf "tool-python %%s\\\\n" "\$*" >>"\$STUB_LOG"\n' >"$TOOLS_DIR/mfp-mcp/bin/python"
@@ -258,4 +271,50 @@ EOF
   [ "$status" -eq 0 ]
   [[ "$output" == *"+ append MFP_USERNAME=jdr"* ]] || false
   [ ! -e "$MFP_CONFIG_DIR" ]
+}
+
+@test "creates the patchright login venv on Python 3.13 with the pinned version" {
+  stub_uv
+  run "$INSTALL"
+  [ "$status" -eq 0 ]
+  grep -qx "uv venv --python 3.13 $LOGIN_VENV" "$STUB_LOG"
+  grep -qx "uv pip install --python $LOGIN_VENV/bin/python patchright==1.64.1" "$STUB_LOG"
+  ! grep -q 'patchright install' "$STUB_LOG" || false
+}
+
+@test "a correct patchright venv is left alone" {
+  stub_uv
+  "$INSTALL" >/dev/null 2>&1
+  : >"$STUB_LOG"
+  run "$INSTALL"
+  [ "$status" -eq 0 ]
+  ! grep -q '^uv venv' "$STUB_LOG" || false
+  ! grep -q '^uv pip install' "$STUB_LOG" || false
+  [[ "$output" == *"patchright 1.64.1 login venv already installed"* ]] || false
+}
+
+@test "a wrong patchright version is reinstalled" {
+  stub_uv
+  "$INSTALL" >/dev/null 2>&1
+  echo 1.50.0 >"$STUB_DIR/patchright-version"
+  : >"$STUB_LOG"
+  run "$INSTALL"
+  [ "$status" -eq 0 ]
+  grep -q '^uv pip install --python .*patchright==1.64.1' "$STUB_LOG"
+}
+
+@test "--dry-run shows the login venv steps and creates nothing" {
+  run "$INSTALL" --dry-run
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"uv venv --python 3.13 "*"login-venv"* ]] || false
+  [[ "$output" == *"pip install --python "*"patchright==1.64.1"* ]] || false
+  [ ! -e "$LOGIN_VENV" ]
+}
+
+@test "missing Google Chrome warns and continues" {
+  stub_uv
+  rm -rf "$MFP_CHROME_APP"
+  run "$INSTALL"
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"Google Chrome not found"*"needed for mfpctl login"* ]] || false
 }

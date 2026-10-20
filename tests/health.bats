@@ -293,6 +293,7 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   [ "$(sends)" = 1 ]
   grep -q 'refresh failed; password re-login failed' "$SENT"
   grep -q 'mfpctl login' "$SENT"
+  grep -q 'mfpctl login --manual' "$SENT"
 }
 
 @test "heal: a recent re-login is rate-limited" {

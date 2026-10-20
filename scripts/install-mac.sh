@@ -117,6 +117,20 @@ fi
 #    skips the download when the browser is already present.
 run "$TOOL_PY" -m playwright install chromium
 
+# 3b. Login browser venv: patchright, separate from Mason's tool env -----------
+# `mfpctl login` drives the installed Google Chrome through patchright (stock
+# Playwright Chromium fails Cloudflare Turnstile even when a human clicks).
+# channel="chrome" uses the installed Chrome, so no `patchright install`.
+LOGIN_PY="$LOGIN_VENV/bin/python"
+if login_venv_ok "$LOGIN_PY"; then
+  log "patchright ${PATCHRIGHT_VERSION} login venv already installed"
+else
+  run mkdir -p "$MFP_STATE_DIR"
+  [ -x "$LOGIN_PY" ] || run "$UV" venv --python "$MASON_PYTHON" "$LOGIN_VENV"
+  run "$UV" pip install --python "$LOGIN_PY" "patchright==$PATCHRIGHT_VERSION"
+fi
+chrome_installed || warn "Google Chrome not found in /Applications; it is needed for mfpctl login. Install Google Chrome."
+
 # 4. Private folders -------------------------------------------------------------
 for d in "$MFP_MCP_DATA_DIR" "$MFP_STATE_DIR" "$MFP_LOG_DIR" "$MFP_CONFIG_DIR"; do
   run mkdir -p "$d"

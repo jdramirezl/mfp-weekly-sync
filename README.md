@@ -42,7 +42,8 @@ git clone <this repo> ~/code/mfp-mason && cd ~/code/mfp-mason
 scripts/install-mac.sh --username <mfp username>   # add --with-tunnel for ChatGPT access
 # Recommended: the bot's own login (runbook step 4): MFP_LOGIN_EMAIL in mason.env, then
 security add-generic-password -s mfp-login -a 'you@example.com' -w   # prompts for the password
-bin/mfpctl login                  # at the Mac's screen; waits for Cloudflare Turnstile, click its box if shown
+bin/mfpctl login                  # at the Mac's screen: drives installed Chrome; click the Cloudflare box if shown
+#   if Cloudflare still fails: bin/mfpctl login --manual   (log in by hand in Chrome, then ⌘Q)
 # Fallback: pbpaste | bin/mfp-auth   (after copying the full Cookie request header)
 bin/mfpctl install
 sleep 20 && bin/mfpctl status     # Mason takes ~10 s to start
@@ -61,7 +62,8 @@ Windows setup, is in [docs/mac-runbook.md](docs/mac-runbook.md).
 | `mfpctl status` | launchd state of each agent plus a live MCP `initialize` probe |
 | `mfpctl logs [-f]` | Show or follow `~/Library/Logs/mfp-mason/*.log` |
 | `mfpctl health [--simulate-fail mcp\|auth\|tunnel]` | Run the health check now |
-| `mfpctl login [--timeout S]` | Log the bot in with its own email + Keychain password (headed Chromium; recommended) |
+| `mfpctl login [--timeout S]` | Log the bot in with its own email + Keychain password, driving the installed Google Chrome via patchright (recommended) |
+| `mfpctl login --manual` | Fallback when Cloudflare fails: log in by hand in Chrome, quit it (⌘Q), and the session is handed to Mason |
 | `mfpctl auth [--username NAME]` | Re-authenticate from a piped cookie: `pbpaste \| mfpctl auth` (same as `bin/mfp-auth`) |
 | `mfpctl refresh` | Rotate the MFP session now (also runs weekly, Sunday 04:30) |
 | `mfpctl tunnel enable` / `disable` / `status` | Manage the optional ChatGPT tunnel |
@@ -100,7 +102,8 @@ with your browser or phone, so you can use MFP freely. The cookie-paste fallback
 bin/mfpctl                    service control
 bin/mfp-auth                  piped-cookie (re)authentication (fallback)
 scripts/login-mfp.sh          bot-owned password login (mfpctl login, auto re-login)
-scripts/mfp_login.py          the Playwright login itself, run with Mason's Python
+scripts/mfp_login.py          the login itself: patchright + installed Chrome, in its own venv/profile
+scripts/save_session.py       hands the harvested cookies to Mason (save_cookies + seed_profile)
 scripts/install-mac.sh        idempotent installer: standalone uv, Python 3.13 (--dry-run, --with-tunnel, --username)
 scripts/mason-run.sh          Mason entry point (loads mason.env, loopback only)
 scripts/health-check.sh       6-hourly check + Telegram alert on state change

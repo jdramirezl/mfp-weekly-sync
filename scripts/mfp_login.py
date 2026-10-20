@@ -1,31 +1,42 @@
 """Log the bot into MyFitnessPal with its own email + password.
 
-Run with Mason's tool Python (it needs Mason's Playwright and
-myfitnesspal_mcp.auth). Uses Mason's persistent Chromium profile, so the
-session this creates is the one Mason's refresh keeps alive, and it is
-independent of any browser or phone session the user has.
+Runs with the patchright login venv's Python (NOT Mason's): patchright drives
+the INSTALLED Google Chrome (channel="chrome", headed, no_viewport), which
+passes Cloudflare Turnstile. Stock Playwright Chromium is flagged as
+automation (navigator.webdriver, --enable-automation, the CDP Runtime.enable
+leak), and on the server Mac Turnstile failed even when a human clicked.
+
+It uses its own Chrome profile (MFP_LOGIN_PROFILE), never Mason's
+browser-profile, and hands the harvested myfitnesspal.com cookies to the
+wrapper through a 0600 JSON file (MFP_COOKIE_OUT). save_session.py (Mason's
+Python) then calls Mason's auth.save_cookies and refresh.seed_profile.
 
 Inputs (environment only):
   MFP_LOGIN_EMAIL             login email (also the Keychain account)
   MFP_LOGIN_KEYCHAIN_SERVICE  Keychain service name (default mfp-login)
-  MFP_MCP_DATA_DIR            Mason data dir (holds browser-profile/)
-  MFP_USERNAME                MFP username to save with the session (optional)
+  MFP_LOGIN_PROFILE           Chrome profile dir for logins (required)
+  MFP_COOKIE_OUT              where to write {"cookies": {...}} (required)
   MFP_LOG_DIR                 where a failure screenshot goes (optional)
   MFP_LOGIN_TIMEOUT           seconds to wait for a session (default 180)
   MFP_TURNSTILE_TIMEOUT       seconds to wait for Cloudflare Turnstile before
                               clicking Log in (default 60; the whole login
                               budget if Turnstile shows an interactive box)
-  MFP_LOGIN_HEADLESS          1 = headless (default 0: headed, so the user can
-                              finish a captcha / 2FA in the window)
+  MFP_MANUAL_WAIT             --manual: seconds to wait for the session (15)
+
+--manual: the user already logged in by hand in real Chrome with this profile
+(no CDP at all) and quit it. Only open the profile and harvest the cookies;
+no Keychain read, no typing.
 
 The password is read from the macOS Keychain here, kept in a local variable,
-handed to the page with locator.fill() over Playwright's pipe, and never
-printed, logged or put in an exception message.
+typed into the page over patchright's pipe, and never printed, logged or put
+in an exception message.
 
 Exit codes: 0 ok, 4 no Keychain item, 5 MFP showed an explicit credentials
-error, 6 timed out (Turnstile/captcha/2FA not cleared), 7 anything else.
+error, 6 timed out (Turnstile/captcha/2FA not cleared, or a browser
+TimeoutError), 7 anything else.
 """
 
+import json
 import os
 import re
 import subprocess
@@ -63,6 +74,9 @@ SSO_WORDS = re.compile(r"google|facebook|apple", re.I)
 TS_INPUT = 'input[name="cf-turnstile-response"]'
 TS_IFRAME = 'iframe[src*="challenges.cloudflare.com"]'
 TS_BOX = ".cf-turnstile"
+# Turnstile's own failure text ("Error", "Verification failed", Spanish too).
+TS_FAILED_RE = re.compile(
+    r"\b(error|failed|failure|try again|verification failed|fall[oó]|intent[ae])\b", re.I)
 CLICK_BOX_MSG = (
     "Cloudflare pide verificación: haz clic en la casilla de Cloudflare en la "
     "ventana del navegador… (Cloudflare wants a check: click the box in the browser window)"
@@ -202,6 +216,27 @@ def turnstile_iframe_visible(page):
         return False
 
 
+def turnstile_failed_text(page):
+    """Turnstile's widget text if it reports an error/failure, else None.
+    Every read is best effort: the widget lives in a cross-origin iframe."""
+    texts = []
+    try:
+        texts.append(page.frame_locator(TS_IFRAME).locator("body").first.inner_text() or "")
+    except Exception:
+        pass
+    try:
+        loc = page.locator(TS_BOX)
+        if loc.count() > 0:
+            texts.append(loc.first.inner_text() or "")
+    except Exception:
+        pass
+    for text in texts:
+        text = re.sub(r"\s+", " ", text).strip()
+        if text and TS_FAILED_RE.search(text):
+            return text[:40]
+    return None
+
+
 def button_enabled(button):
     try:
         if not button.is_enabled():
@@ -227,6 +262,12 @@ class Tracker:
             say(state)
         self.last = state
 
+    def ts_failed(self, text):
+        if "ts_failed" not in self.seen:
+            self.seen["ts_failed"] = text
+            say(f"turnstile failed: {text}")
+        self.last = "turnstile failed"
+
     def ask_click(self):
         if not self.asked:
             self.asked = True
@@ -235,7 +276,9 @@ class Tracker:
 
 def wait_for_turnstile(page, submit, overall_deadline, tracker):
     """Block until Turnstile (if any) has a token and the button is enabled.
-    Returns True when it is OK to click."""
+    Returns True when it is OK to click. Never True while Turnstile is
+    present but unsolved, even if the button looks enabled (that race made
+    the unattended 09:00 re-login submit too early)."""
     ts_timeout = int(os.environ.get("MFP_TURNSTILE_TIMEOUT") or "60")
     deadline = min(time.monotonic() + ts_timeout, overall_deadline)
     polls = 0
@@ -243,8 +286,17 @@ def wait_for_turnstile(page, submit, overall_deadline, tracker):
         present = turnstile_present(page)
         solved = present and turnstile_solved(page)
         enabled = button_enabled(submit)
-        if present:
-            tracker.note("turnstile", "turnstile solved" if solved else "turnstile pending")
+        failed = None
+        if present and not solved:
+            failed = turnstile_failed_text(page)
+            if failed:
+                tracker.ts_failed(failed)
+                tracker.ask_click()
+                deadline = overall_deadline  # the user can retry the box
+            else:
+                tracker.note("turnstile", "turnstile pending")
+        elif present:
+            tracker.note("turnstile", "turnstile solved")
         tracker.note("button", "button enabled" if enabled else "button disabled")
         if (solved or not present) and enabled:
             return True
@@ -253,12 +305,14 @@ def wait_for_turnstile(page, submit, overall_deadline, tracker):
             tracker.ask_click()
             deadline = overall_deadline
         if time.monotonic() >= deadline:
-            if enabled:
-                say("turnstile wait expired but the button is enabled; submitting")
+            if not present and enabled:
                 return True
-            say("turnstile pending at timeout" if present else "button still disabled at timeout")
             if present:
-                tracker.last = "turnstile pending"
+                say("turnstile pending at timeout")
+                tracker.last = "turnstile failed" if failed else "turnstile pending"
+            else:
+                say("button still disabled at timeout")
+                tracker.last = "button disabled"
             return False
         page.wait_for_timeout(1000)
         polls += 1
@@ -347,7 +401,11 @@ def login(context, page, email, password_source, timeout):
         if present and not solved:
             # Turnstile came back after the click (post-submit challenge).
             ts_after_submit = True
-            tracker.note("state", "turnstile pending")
+            failed = turnstile_failed_text(page)
+            if failed:
+                tracker.ts_failed(failed)
+            else:
+                tracker.note("state", "turnstile pending")
             if turnstile_iframe_visible(page):
                 tracker.ask_click()
         elif present and ts_after_submit and resubmits < 1 and button_enabled(submit):
@@ -372,49 +430,89 @@ def login(context, page, email, password_source, timeout):
         page.wait_for_timeout(2000)
 
 
-def main():
+def harvest(context, out_path):
+    cookies = {
+        c["name"]: c["value"]
+        for c in context.cookies(MFP_URL)
+        if "myfitnesspal.com" in (c.get("domain") or "")
+    }
+    if SESSION_COOKIE not in cookies:
+        return 0
+    fd = os.open(out_path, os.O_WRONLY | os.O_CREAT | os.O_TRUNC, 0o600)
+    with os.fdopen(fd, "w") as fh:
+        json.dump({"cookies": cookies}, fh)
+    os.chmod(out_path, 0o600)
+    return len(cookies)
+
+
+def manual_harvest(context, page):
+    """--manual: the user logged in by hand in this profile; just wait for the
+    session cookie to be readable."""
+    wait = int(os.environ.get("MFP_MANUAL_WAIT") or "15")
+    page.goto(MFP_URL, wait_until="domcontentloaded", timeout=30000)
+    deadline = time.monotonic() + wait
+    while not has_session(context):
+        if time.monotonic() >= deadline:
+            raise LoginError(
+                EXIT_TIMEOUT,
+                "no MFP session in the login profile; did you log in before closing Chrome?")
+        page.wait_for_timeout(1000)
+
+
+def main(argv):
+    manual = "--manual" in argv[1:]
     email = os.environ.get("MFP_LOGIN_EMAIL", "").strip()
     service = os.environ.get("MFP_LOGIN_KEYCHAIN_SERVICE") or "mfp-login"
-    data_dir = os.environ.get("MFP_MCP_DATA_DIR", "")
+    profile = os.environ.get("MFP_LOGIN_PROFILE", "")
+    out_path = os.environ.get("MFP_COOKIE_OUT", "")
     timeout = int(os.environ.get("MFP_LOGIN_TIMEOUT") or "180")
-    headless = os.environ.get("MFP_LOGIN_HEADLESS") == "1"
-    if not email or not data_dir:
-        say("MFP_LOGIN_EMAIL and MFP_MCP_DATA_DIR are required")
+    missing = [n for n, v in (("MFP_LOGIN_PROFILE", profile), ("MFP_COOKIE_OUT", out_path)) if not v]
+    if not manual and not email:
+        missing.insert(0, "MFP_LOGIN_EMAIL")
+    if missing:
+        say(f"{', '.join(missing)} required")
         return EXIT_OTHER
 
-    try:
-        password = read_password(service, email)
-    except LoginError as exc:
-        say(str(exc))
-        return exc.code
+    password = None
+    if not manual:
+        try:
+            password = read_password(service, email)
+        except LoginError as exc:
+            say(str(exc))
+            return exc.code
 
-    from playwright.sync_api import sync_playwright
-    from myfitnesspal_mcp import auth
+    from patchright.sync_api import TimeoutError as PWTimeout
+    from patchright.sync_api import sync_playwright
 
-    profile = Path(data_dir) / "browser-profile"
-    profile.mkdir(parents=True, exist_ok=True)
+    Path(profile).mkdir(parents=True, exist_ok=True)
+    os.chmod(profile, 0o700)
     code = EXIT_OTHER
     with sync_playwright() as pw:
-        context = pw.chromium.launch_persistent_context(str(profile), headless=headless)
+        # The undetected configuration: installed Chrome, headed, no viewport
+        # override, and NO custom user agent, headers or extra args.
+        context = pw.chromium.launch_persistent_context(
+            user_data_dir=profile, channel="chrome", headless=False, no_viewport=True)
         page = context.pages[0] if context.pages else context.new_page()
         try:
-            login(context, page, email, lambda: password, timeout)
-            cookies = {
-                c["name"]: c["value"]
-                for c in context.cookies(MFP_URL)
-                if "myfitnesspal.com" in (c.get("domain") or "")
-            }
-            if SESSION_COOKIE not in cookies:
+            if manual:
+                manual_harvest(context, page)
+            else:
+                login(context, page, email, lambda: password, timeout)
+            n = harvest(context, out_path)
+            if not n:
                 raise LoginError(EXIT_OTHER, "logged in, but no session cookie to save")
-            auth.save_cookies(cookies, username=os.environ.get("MFP_USERNAME") or None)
             say(f"final page {url_path(page)}")
-            say(f"Saved {len(cookies)} cookies.")
+            say(f"Harvested {n} cookies.")
             code = EXIT_OK
         except LoginError as exc:
             say(str(exc))
             say(f"final page {url_path(page)}")
             screenshot(page)
             code = exc.code
+        except PWTimeout:
+            say("browser timed out (page load or action); last state: browser timeout")
+            screenshot(page)
+            code = EXIT_TIMEOUT
         except Exception as exc:  # never include the password: it is not in exc
             say(f"login failed: {type(exc).__name__}")
             screenshot(page)
@@ -426,4 +524,4 @@ def main():
 
 
 if __name__ == "__main__":
-    sys.exit(main())
+    sys.exit(main(sys.argv))

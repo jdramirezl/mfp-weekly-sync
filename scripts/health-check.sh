@@ -73,7 +73,7 @@ fail() {
 hint_for() {
   case "$1" in
     mcp) printf '%s' "run \`mfpctl restart\`; logs in ~/Library/Logs/mfp-mason" ;;
-    auth) printf '%s' "run \`bin/mfpctl login\` at the Mac (or \`pbpaste | bin/mfp-auth\`)" ;;
+    auth) printf '%s' "run \`bin/mfpctl login\` at the Mac (if Cloudflare fails: \`bin/mfpctl login --manual\`)" ;;
     tunnel) printf '%s' "check ~/.config/mfp-mason/tunnel.env or run \`mfpctl tunnel disable\`" ;;
   esac
 }

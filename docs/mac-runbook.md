@@ -40,6 +40,9 @@ This installs:
   `pydantic-core` doesn't build on Python 3.15, so the tool is always pinned
   to 3.13. An install on another Python is rebuilt.
 - `mfp-mcp[autorefresh]==0.4.1` and Playwright Chromium
+- a small separate venv with `patchright==1.64.1` for `mfpctl login`. It
+  drives your installed **Google Chrome**, which must be installed; the
+  script warns if it isn't.
 - with `--with-tunnel`, `tunnel-client`. This is the only part that needs
   Homebrew, and it runs with `HOMEBREW_NO_AUTO_UPDATE=1`.
 
@@ -87,8 +90,16 @@ on your phone.**
    bin/mfpctl login
    ```
 
-   - A Chromium window opens on MFP's login page and types in the email and
-     password.
+   - Your **installed Google Chrome** opens on MFP's login page, driven by
+     [patchright](https://pypi.org/project/patchright/), and types in the
+     email and password. Patchright is an undetected Playwright, installed by
+     `scripts/install-mac.sh` into its own small venv
+     (`~/Library/Application Support/mfp-mason/login-venv`); Mason's own
+     environment is untouched. Why not Mason's bundled Chromium: Cloudflare
+     Turnstile flags automation-flavoured Chromium, and on setup day the box
+     failed even when a human clicked it.
+   - Chrome uses its own login profile
+     (`~/Library/Application Support/mfp-mason/login-profile`), not Mason's.
    - MFP's login page uses **Cloudflare Turnstile**: a "Verifying…" widget
      under "Forgot password?" that keeps the Log in button disabled. The
      script waits for it to clear before clicking, up to 60 s. If a
@@ -100,10 +111,27 @@ on your phone.**
      item. Click **Always Allow**. Otherwise unattended re-logins block on
      that dialog.
    - The script never clicks "Continue with Google/Facebook".
-   - It saves all of MFP's cookies, restarts Mason, and prints
-     `✅ Logged in as <you>`.
+   - It hands all of MFP's cookies to Mason (`auth.save_cookies`) through a
+     private temp file that is deleted right after. It seeds Mason's own
+     browser profile, so Mason's refresh keeps working, restarts Mason, and
+     prints `✅ Logged in as <you>`.
 
 5. **Check it:** `bin/mfpctl status` and `bin/mfpctl health`.
+
+**If Cloudflare still fails: `bin/mfpctl login --manual`.** This opens plain
+Google Chrome on the same login profile, with no automation attached:
+
+1. At the Mac's screen, run `bin/mfpctl login --manual`.
+2. In the Chrome window that opens, log in to MyFitnessPal with email and
+   password, and solve the Cloudflare box.
+3. **Quit that Chrome window with ⌘Q.** The script waits up to 10 minutes for
+   Chrome to close.
+4. The script reads the session from the profile and hands it to Mason, the
+   same as above. macOS may ask once whether to allow access to "Chrome Safe
+   Storage" while the cookies are read. Click **Always Allow**.
+
+`--manual` never runs unattended. The automatic re-login always uses the
+automatic mode.
 
 Never use MFP's "log out of all devices". It ends the bot's session too. The
 health check would then re-login automatically within 6 hours (see
@@ -308,13 +336,15 @@ What this repo adds so the session doesn't age out while nobody's using it:
   these steps in order:
   1. `refresh`
   2. if a password login is configured, a password **re-login**. A headed
-     Chromium window may briefly appear on the Mac. At most one re-login runs
+     Google Chrome window may briefly appear on the Mac. It uses the same
+     patchright path as `bin/mfpctl login`, automatic mode only. At most one
+     re-login runs
      per 6 h, so MFP doesn't flag the account. After a Turnstile or captcha
      timeout (exit 6), which isn't a credentials rejection, it retries after
      1 h instead.
   3. only then a 🔴 alert. It names what was tried and why the re-login
-     failed, e.g. "timed out, Turnstile/captcha needs a click at the Mac's
-     screen".
+     failed, and tells you to run `bin/mfpctl login` at the Mac's screen, or
+     `bin/mfpctl login --manual` if Cloudflare keeps failing.
 
   `bin/mfpctl logs | grep -E 'healed|re-login'` shows what happened. The re-login
   needs the Mac to stay logged in to its desktop session; it already does for
@@ -334,23 +364,33 @@ What this repo adds so the session doesn't age out while nobody's using it:
 - **`bin/mfpctl login` fails:** read `~/Library/Logs/mfp-mason/login.log`. It
   records which selectors matched. If MFP changed its login page, they need
   updating in `scripts/mfp_login.py`. It also records the waiting states:
-  `turnstile pending` / `turnstile solved`, `button disabled` /
-  `button enabled`, `error banner: …`. Exit codes:
+  `turnstile pending` / `turnstile solved` / `turnstile failed: …` (the widget
+  itself reported an error), `button disabled` / `button enabled`,
+  `error banner: …`. Exit codes:
   - 4: no Keychain item
   - 5: MFP showed an explicit credentials error (`error banner: …` in the
     log). Check the password. A page that is merely still on
     `/account/login`, for example while Turnstile shows "Verifying…", is
     never treated as a rejection.
-  - 6: timed out, usually `turnstile pending` (Cloudflare didn't clear) or an
-    unfinished captcha or 2FA. Run `bin/mfpctl login` again at the screen and
-    click the Cloudflare box if it appears. `MFP_IMPERSONATE` doesn't apply
-    here, because this is a real browser. If it keeps happening, wait a while
-    and retry.
+  - 6: timed out, usually `turnstile pending` or `turnstile failed`
+    (Cloudflare didn't clear), an unfinished captcha or 2FA, or a browser
+    timeout. Run `bin/mfpctl login` again at the screen and click the
+    Cloudflare box if it appears. If it keeps failing, use
+    `bin/mfpctl login --manual`. `MFP_IMPERSONATE` doesn't apply here,
+    because this is a real browser.
+  - 7: an unexpected error, logged by type. Check `login.log`.
+  - 8: the login environment is missing: the patchright venv or Google
+    Chrome. Run `scripts/install-mac.sh`, and install Chrome if it says so.
 
   A failed run saves `login-failure.png` in the same folder. It may show your
   email; the folder is private (0700).
 - **The login hangs with no window activity:** a hidden Keychain prompt is
   probably waiting. Look for it on the Mac's screen and click **Always Allow**.
+- **A login window is stuck:** quit that Chrome window (⌘Q) and re-run
+  `bin/mfpctl login`.
+- **A stale or broken login profile:** delete
+  `~/Library/Application Support/mfp-mason/login-profile` and log in again.
+  This doesn't touch Mason's own session or profile.
 - **Rejected within minutes of auth, or `rotated: no`:** you probably pasted
   only the session token, or logged out of MFP in that browser. Re-auth with the
   full Cookie header and stay logged in.

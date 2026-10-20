@@ -1,5 +1,5 @@
 #!/usr/bin/env bats
-# scripts/mfp_login.py against a fake Playwright and a fake Mason auth module.
+# scripts/mfp_login.py against a fake patchright (wrapping a fake Playwright).
 
 load helpers
 
@@ -11,29 +11,36 @@ setup() {
   LOGIN_PY="$REPO_ROOT/scripts/mfp_login.py"
   export PYTHONPATH="$REPO_ROOT/tests/fakepy"
   export PYTHONDONTWRITEBYTECODE=1
-  export FAKE_PW_LOG="$BATS_TEST_TMPDIR/pw.log" FAKE_SAVE_FILE="$BATS_TEST_TMPDIR/saved.json"
+  export FAKE_PW_LOG="$BATS_TEST_TMPDIR/pw.log"
   : >"$FAKE_PW_LOG"
-  export MFP_LOGIN_EMAIL="you@example.com" MFP_USERNAME="jdr" MFP_LOG_DIR="$BATS_TEST_TMPDIR/logs"
-  mkdir -p "$MFP_LOG_DIR" "$MFP_MCP_DATA_DIR"
+  export MFP_LOGIN_EMAIL="you@example.com" MFP_LOG_DIR="$BATS_TEST_TMPDIR/logs"
+  export MFP_LOGIN_PROFILE="$MFP_STATE_DIR/login-profile"
+  export MFP_COOKIE_OUT="$MFP_STATE_DIR/login-cookies.test"
+  OUT="$MFP_COOKIE_OUT"
+  mkdir -p "$MFP_LOG_DIR" "$MFP_STATE_DIR"
+  : >"$OUT"
   stub_security
 }
 
-py() { /usr/bin/python3 "$LOGIN_PY"; }
+py() { /usr/bin/python3 "$LOGIN_PY" "$@"; }
 
-@test "fills email and password via the labelled fields, clicks Log in, saves all MFP cookies" {
+@test "fills email and password via the labelled fields, clicks Log in, harvests all MFP cookies" {
   run py
   [ "$status" -eq 0 ]
   [[ "$output" == *"email field matched label=Email Address"* ]] || false
   [[ "$output" == *"password field matched label=Password"* ]] || false
   [[ "$output" == *"submit button matched role-button"* ]] || false
-  [[ "$output" == *"Saved 3 cookies."* ]] || false
+  [[ "$output" == *"Harvested 3 cookies."* ]] || false
   grep -qx "type label=Email Address you@example.com" "$FAKE_PW_LOG"
   grep -qx "type label=Password $PASSWORD" "$FAKE_PW_LOG"
-  grep -q "launch $MFP_MCP_DATA_DIR/browser-profile headless=False" "$FAKE_PW_LOG"
-  grep -q '"__Secure-next-auth.session-token": "SESSION-VALUE"' "$FAKE_SAVE_FILE"
-  grep -q '"__cf_bm"' "$FAKE_SAVE_FILE"
-  ! grep -q '"other"' "$FAKE_SAVE_FILE" || false
-  grep -q '"username": "jdr"' "$FAKE_SAVE_FILE"
+  grep -qx "launch channel=chrome headless=False no_viewport=True" "$FAKE_PW_LOG"
+  grep -qx "launch $MFP_LOGIN_PROFILE headless=False" "$FAKE_PW_LOG"
+  ! grep -q bad-launch-kwarg "$FAKE_PW_LOG" || false
+  grep -q '"__Secure-next-auth.session-token": "SESSION-VALUE"' "$OUT"
+  grep -q '"__cf_bm"' "$OUT"
+  ! grep -q '"other"' "$OUT" || false
+  [ "$(file_mode "$OUT")" = 600 ]
+  [ "$(file_mode "$MFP_LOGIN_PROFILE")" = 700 ]
   grep -qx close "$FAKE_PW_LOG"
 }
 
@@ -63,14 +70,14 @@ py() { /usr/bin/python3 "$LOGIN_PY"; }
   [ "$status" -eq 0 ]
   [[ "$output" == *"already logged in"* ]] || false
   ! grep -q '^\(fill\|type\)' "$FAKE_PW_LOG" || false
-  [ -s "$FAKE_SAVE_FILE" ]
+  [ -s "$OUT" ]
 }
 
 @test "a challenge prints the wait message once, then succeeds" {
   FAKE_PW_MODE=challenge run py
   [ "$status" -eq 0 ]
   [ "$(printf '%s\n' "$output" | grep -c 'Waiting for you to finish the challenge')" = 1 ]
-  [[ "$output" == *"Saved"* ]] || false
+  [[ "$output" == *"Harvested"* ]] || false
 }
 
 @test "rejected credentials exit 5 with a screenshot" {
@@ -79,7 +86,7 @@ py() { /usr/bin/python3 "$LOGIN_PY"; }
   [[ "$output" == *"error banner: Incorrect email or password"* ]] || false
   [[ "$output" == *"MFP rejected the email/password"* ]] || false
   [ -e "$MFP_LOG_DIR/login-failure.png" ]
-  [ ! -e "$FAKE_SAVE_FILE" ]
+  [ ! -s "$OUT" ]
 }
 
 @test "no session within the timeout exits 6" {
@@ -115,7 +122,7 @@ py() { /usr/bin/python3 "$LOGIN_PY"; }
   [[ "$output" == *"turnstile pending"*"turnstile solved"* ]] || false
   [[ "$output" == *"button disabled"*"button enabled"* ]] || false
   [[ "$output" != *TS-TOKEN-VALUE* ]] || false
-  [[ "$output" == *"Saved"* ]] || false
+  [[ "$output" == *"Harvested"* ]] || false
 }
 
 @test "turnstile widget with role=alert 'Verifying…' is NOT a rejection (setup-day bug)" {
@@ -154,4 +161,65 @@ py() { /usr/bin/python3 "$LOGIN_PY"; }
   FAKE_PW_MODE=turnstile run py
   grep -qx "type label=Password $PASSWORD" "$FAKE_PW_LOG"
   [[ "$output" != *"$PASSWORD"* ]] || false
+}
+
+@test "turnstile unsolved but the button enabled is never clicked (09:00 race)" {
+  FAKE_PW_MODE=turnstile_stuck_enabled MFP_TURNSTILE_TIMEOUT=1 MFP_LOGIN_TIMEOUT=2 run py
+  [ "$status" -eq 6 ]
+  ! grep -q '^click' "$FAKE_PW_LOG" || false
+  [[ "$output" == *"turnstile pending at timeout"* ]] || false
+  [ ! -s "$OUT" ]
+}
+
+@test "turnstile error is logged once; a retried box then succeeds" {
+  FAKE_PW_MODE=turnstile_failed FAKE_TS_RETRY=1 run py
+  [ "$status" -eq 0 ]
+  [ "$(printf '%s\n' "$output" | grep -c 'turnstile failed: Error: Verification failed')" = 1 ]
+  ! grep -q '^click-disabled' "$FAKE_PW_LOG" || false
+  [[ "$output" == *"Harvested"* ]] || false
+}
+
+@test "turnstile that keeps failing times out with last state turnstile failed" {
+  FAKE_PW_MODE=turnstile_failed FAKE_TS_FAIL_POLLS=100000 MFP_TURNSTILE_TIMEOUT=1 MFP_LOGIN_TIMEOUT=2 run py
+  [ "$status" -eq 6 ]
+  [[ "$output" == *"last state: turnstile failed"* ]] || false
+  ! grep -q '^click' "$FAKE_PW_LOG" || false
+}
+
+@test "a browser TimeoutError is exit 6 (timeout), not 7" {
+  FAKE_PW_MODE=goto_timeout run py
+  [ "$status" -eq 6 ]
+  [[ "$output" == *"browser timed out"* ]] || false
+}
+
+@test "--manual harvests the profile's session without Keychain or typing" {
+  FAKE_PW_MODE=manual run py --manual
+  [ "$status" -eq 0 ]
+  ! grep -q '^security' "$STUB_LOG" || false
+  ! grep -q '^\(fill\|type\|click\)' "$FAKE_PW_LOG" || false
+  grep -qx "launch channel=chrome headless=False no_viewport=True" "$FAKE_PW_LOG"
+  grep -q 'SESSION-VALUE' "$OUT"
+  [[ "$output" == *"Harvested 3 cookies."* ]] || false
+  [[ "$output" != *SESSION-VALUE* ]] || false
+}
+
+@test "--manual with no session in the profile exits 6 with a hint" {
+  FAKE_PW_MODE=manual_empty MFP_MANUAL_WAIT=1 run py --manual
+  [ "$status" -eq 6 ]
+  [[ "$output" == *"no MFP session in the login profile; did you log in before closing Chrome?"* ]] || false
+  [ ! -s "$OUT" ]
+}
+
+@test "MFP_LOGIN_PROFILE and MFP_COOKIE_OUT are required" {
+  unset MFP_COOKIE_OUT
+  run py
+  [ "$status" -eq 7 ]
+  [[ "$output" == *"MFP_COOKIE_OUT"* ]] || false
+}
+
+@test "cookie and token values never reach output" {
+  FAKE_PW_MODE=turnstile run py
+  [ "$status" -eq 0 ]
+  [[ "$output" != *SESSION-VALUE* ]] || false
+  [[ "$output" != *TS-TOKEN-VALUE* ]] || false
 }

@@ -24,9 +24,10 @@ Session:
   auth [--username NAME]
                      Re-authenticate from a piped cookie: pbpaste | mfpctl auth
   refresh            Rotate the MFP session now (runs weekly, Sunday 04:30).
-  login [--timeout S]
+  login [--manual] [--timeout S]
                      Log the bot in with its own email + Keychain password
-                     (opens a Chromium window; run at the Mac's screen).
+                     (drives the installed Google Chrome; run at the screen).
+                     --manual: log in by hand in Chrome, then quit it (⌘Q).
 
 Health:
   health [--simulate-fail mcp|auth|tunnel] [--wait SECONDS]
@@ -92,7 +93,7 @@ RUNTIME_BIN_DIR="$MFP_STATE_DIR/bin"
 install_runtime_scripts() {
   local f
   run mkdir -p "$RUNTIME_BIN_DIR/lib"
-  for f in mason-run.sh health-check.sh tunnel-run.sh refresh-session.sh login-mfp.sh mfp_login.py; do
+  for f in mason-run.sh health-check.sh tunnel-run.sh refresh-session.sh login-mfp.sh mfp_login.py save_session.py; do
     [ -f "$REPO_ROOT/scripts/$f" ] || continue
     run cp "$REPO_ROOT/scripts/$f" "$RUNTIME_BIN_DIR/$f"
     run chmod 755 "$RUNTIME_BIN_DIR/$f"

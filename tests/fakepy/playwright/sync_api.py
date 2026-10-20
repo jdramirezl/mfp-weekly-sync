@@ -2,7 +2,9 @@
 
 FAKE_PW_MODE   success | already | challenge | rejected | spanish_rejected |
                timeout | turnstile | turnstile_interactive | turnstile_stuck |
-               turnstile_widget_alert | post_submit_turnstile
+               turnstile_widget_alert | post_submit_turnstile |
+               turnstile_failed | turnstile_stuck_enabled | goto_timeout |
+               manual | manual_empty
 FAKE_PW_LABELS comma list of get_by_label() names present
 FAKE_PW_CSS    comma list of CSS selectors present for the form fields/button
 FAKE_PW_ROLE   1 if a "Log in" role=button is present (default 1)
@@ -25,7 +27,13 @@ TS_POLLS = int(os.environ.get("FAKE_TS_POLLS", "3"))
 SESSION = "__Secure-next-auth.session-token"
 HOME = "https://www.myfitnesspal.com/"
 TS_MODES = {"turnstile", "turnstile_interactive", "turnstile_stuck",
-            "turnstile_widget_alert", "post_submit_turnstile"}
+            "turnstile_widget_alert", "post_submit_turnstile",
+            "turnstile_failed", "turnstile_stuck_enabled"}
+FAIL_POLLS = int(os.environ.get("FAKE_TS_FAIL_POLLS", "4"))  # turnstile_failed: polls showing "Error"
+
+
+class TimeoutError(Exception):
+    """Mirrors playwright.sync_api.TimeoutError."""
 
 TS_INPUT = 'input[name="cf-turnstile-response"]'
 TS_IFRAME = 'iframe[src*="challenges.cloudflare.com"]'
@@ -43,7 +51,7 @@ class State:
     clicks = 0
     submitted = False
     submit_tick = 0
-    logged_in = MODE == "already"
+    logged_in = MODE in ("already", "manual")
     login_at = None  # tick at which a pending login completes
     ts_start = None  # tick when the password was typed
     ts_reset = None  # post_submit_turnstile: tick of the first submit
@@ -60,9 +68,18 @@ def ts_present():
     return MODE in TS_MODES and on_login()
 
 
+def ts_failed_now():
+    """turnstile_failed: the widget shows an error for FAIL_POLLS ticks after
+    the password is typed; a retry (FAKE_TS_RETRY=1) then solves it."""
+    return MODE == "turnstile_failed" and S.ts_start is not None and S.ticks - S.ts_start < FAIL_POLLS
+
+
 def ts_solved():
-    if MODE not in TS_MODES or MODE == "turnstile_stuck":
+    if MODE not in TS_MODES or MODE in ("turnstile_stuck", "turnstile_stuck_enabled"):
         return False
+    if MODE == "turnstile_failed":
+        return (os.environ.get("FAKE_TS_RETRY") == "1" and S.ts_start is not None
+                and S.ticks - S.ts_start >= FAIL_POLLS + 1)
     if MODE == "post_submit_turnstile":
         return S.ts_reset is None or S.ticks >= S.ts_reset + TS_POLLS
     if S.ts_start is None:
@@ -72,6 +89,8 @@ def ts_solved():
 
 
 def button_enabled():
+    if MODE == "turnstile_stuck_enabled":
+        return True  # the 09:00 race: looks clickable while Turnstile is unsolved
     return not ts_present() or ts_solved()
 
 
@@ -157,7 +176,8 @@ class El:
         S.clicks += 1
         S.submitted = True
         S.submit_tick = S.ticks
-        if MODE in ("success", "turnstile", "turnstile_interactive"):
+        if MODE in ("success", "turnstile", "turnstile_interactive", "turnstile_failed",
+                    "turnstile_stuck_enabled"):
             log_in_now()
         elif MODE == "turnstile_widget_alert":
             S.login_at = S.ticks + 2
@@ -196,7 +216,12 @@ class Page:
 
     def goto(self, url, **kw):
         rec(f"goto {url}")
-        S.url = HOME if MODE == "already" else url
+        if MODE == "goto_timeout":
+            raise TimeoutError("Timeout 30000ms exceeded.")
+        S.url = HOME if MODE in ("already", "manual") or not url.endswith("/login") else url
+
+    def frame_locator(self, sel):
+        return FrameLocator(sel)
 
     def get_by_label(self, name, exact=False):
         return Locator([El("field", f"label={name}")] if name in LABELS else [])
@@ -243,6 +268,18 @@ class Page:
         open(path, "wb").close()
 
 
+class FrameLocator:
+    def __init__(self, sel):
+        self.sel = sel
+
+    def locator(self, sel):
+        if self.sel == TS_IFRAME and ts_present():
+            text = "Error: Verification failed" if ts_failed_now() else (
+                "Success!" if ts_solved() else "Verifying…")
+            return Locator([El("text", "ts-body", text, in_ts=True)])
+        return Locator([])
+
+
 class Context:
     def __init__(self):
         self.pages = [Page()]
@@ -263,8 +300,8 @@ class Context:
 
 
 class Chromium:
-    def launch_persistent_context(self, path, headless=True):
-        rec(f"launch {path} headless={headless}")
+    def launch_persistent_context(self, user_data_dir=None, headless=True, **kw):
+        rec(f"launch {user_data_dir} headless={headless}")
         return Context()
 
 
