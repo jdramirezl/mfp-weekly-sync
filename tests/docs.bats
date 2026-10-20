@@ -39,7 +39,7 @@ doc_files() {
 @test "mfpctl help lists every command" {
   run "$REPO_ROOT/bin/mfpctl" --help
   [ "$status" -eq 0 ]
-  for c in install uninstall start stop restart status logs health auth refresh "tunnel enable" "tunnel disable" "tunnel status"; do
+  for c in install uninstall start stop restart status logs health auth refresh login "tunnel enable" "tunnel disable" "tunnel status"; do
     [[ "$output" == *"  $c"* ]] || false
   done
 }
@@ -48,4 +48,10 @@ doc_files() {
   grep -q 'Copy value' "$REPO_ROOT/docs/mac-runbook.md"
   grep -qi "don't log out\|do not log out" "$REPO_ROOT/docs/mac-runbook.md"
   ! grep -rq 'Application\*\* → \*\*Cookies' "$REPO_ROOT/README.md" "$REPO_ROOT/docs" || false
+}
+
+@test "runbook documents the bot-owned login and the Keychain prompt" {
+  grep -q 'security add-generic-password -s mfp-login' "$REPO_ROOT/docs/mac-runbook.md"
+  grep -q 'Always Allow' "$REPO_ROOT/docs/mac-runbook.md"
+  grep -q 'mfpctl login' "$REPO_ROOT/README.md"
 }

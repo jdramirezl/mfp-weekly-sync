@@ -169,7 +169,10 @@ cat <<EOF
 
 $( [ "$DRY_RUN" = 1 ] && echo "Dry run: nothing was changed." || echo "Install step done.") Next, in a normal Terminal window:
   0. If "mfp-mcp: command not found": uv tool update-shell, then open a new Terminal
-  1. pbpaste | bin/mfp-auth  # after copying the full Cookie request header (DevTools → Network)
+  1. Bot login (recommended): add MFP_LOGIN_EMAIL to mason.env, then
+       security add-generic-password -s mfp-login -a <email> -w   # prompts
+       bin/mfpctl login         # at the screen
+     Fallback: pbpaste | bin/mfp-auth  # after copying the full Cookie request header
   2. mfp-mcp auth --check    # should say "Status: valid" and "Auto-refresh: ready"
   3. bin/mfpctl install      # start the launchd services
   4. cp "$MFP_CONFIG_DIR/alert.env.example" "$MFP_CONFIG_DIR/alert.env" && chmod 600 "$MFP_CONFIG_DIR/alert.env"

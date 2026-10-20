@@ -52,6 +52,71 @@ open a new Terminal.
 
 ## 4. Connect MyFitnessPal
 
+### Recommended: give the bot its own password login
+
+Why: a session copied out of your browser shares one NextAuth session lineage
+with that browser. When either side refreshes, the other copy can be
+invalidated. On setup day every pasted cookie set, token-only or the full
+17–22-cookie header, was rejected within minutes to hours, even right after a
+refresh reported `rotated: yes`. With a login of its own, the bot holds an
+independent session. **You can then keep using MFP freely in your browser and
+on your phone.**
+
+1. **Add a password to your MFP account.** If you sign in with Google or
+   Apple, log out in a private window and use **Forgot password?** on the
+   login page with the account's email. This sets a password on the same
+   account and diary.
+2. **Tell the bot the login email.** Add it to `mason.env`:
+
+   ```bash
+   printf 'MFP_LOGIN_EMAIL=%s\n' 'you@example.com' >> ~/.config/mfp-mason/mason.env
+   chmod 600 ~/.config/mfp-mason/mason.env
+   ```
+
+3. **Store the password in the login Keychain.** Leave the value after `-w`
+   empty so `security` prompts for it, which keeps the password out of argv
+   and shell history:
+
+   ```bash
+   security add-generic-password -s mfp-login -a 'you@example.com' -w
+   ```
+
+4. **Log in, at the Mac's screen:**
+
+   ```bash
+   bin/mfpctl login
+   ```
+
+   - A Chromium window opens on MFP's login page and fills in the email and
+     password. If a captcha, a challenge or a 2FA prompt appears, finish it in
+     that window; the script waits up to 3 minutes.
+   - The first time, macOS asks whether `security` may use the `mfp-login`
+     item. Click **Always Allow**. Otherwise unattended re-logins block on
+     that dialog.
+   - The script never clicks "Continue with Google/Facebook".
+   - It saves all of MFP's cookies, restarts Mason, and prints
+     `✅ Logged in as <you>`.
+
+5. **Check it:** `bin/mfpctl status` and `bin/mfpctl health`.
+
+Never use MFP's "log out of all devices". It ends the bot's session too. The
+health check would then re-login automatically within 6 hours (see
+[Session longevity](#session-longevity-sso)).
+
+**If MFP won't add a password to your SSO account:**
+
+- A **new** email+password MFP account is a **different diary**. The hub would
+  log meals there, not in your main account. It's only an option if you're
+  willing to move your tracking to it.
+- MFP support may be able to add a password to an SSO account on request.
+  This is unverified.
+- Otherwise, use the cookie fallback below and expect periodic re-auth.
+
+### Fallback: paste a browser cookie
+
+Use this only if the password login isn't possible. The session stays tied to
+your browser, so expect periodic re-auth.
+
 Copy the **full Cookie request header**, not just the session token:
 
 1. Log in at myfitnesspal.com in the browser on this Mac.
@@ -233,6 +298,17 @@ What this repo adds so the session doesn't age out while nobody's using it:
   unverified until the first real run, so check the log after the first Sunday.
   If it never rotates and you still get expiry alerts, re-auth with pbpaste
   roughly monthly.
+- **Self-healing:** when the health check finds the session rejected, it tries
+  these steps in order:
+  1. `refresh`
+  2. if a password login is configured, a password **re-login**. A headed
+     Chromium window may briefly appear on the Mac. At most one re-login runs
+     per 6 h, so MFP doesn't flag the account.
+  3. only then a 🔴 alert, which names what was tried.
+
+  `bin/mfpctl logs | grep -E 'healed|re-login'` shows what happened. The re-login
+  needs the Mac to stay logged in to its desktop session; it already does for
+  the hub.
 - **Health check every 6 h:** 03:00, 09:00, 15:00 and 21:00, plus at login. A
   dead session alerts within 6 hours.
 
@@ -242,8 +318,20 @@ What this repo adds so the session doesn't age out while nobody's using it:
   follows them.
 - **`MCP ... UNREACHABLE`:** run `bin/mfpctl restart`, then check `mason.err.log`.
   launchd waits 30 s between crash restarts.
-- **`Status: rejected (...)`:** run `bin/mfpctl refresh`. If it stays rejected,
-  copy the full Cookie request header (step 4) and run `pbpaste | bin/mfp-auth`.
+- **`Status: rejected (...)`:** run `bin/mfpctl login` at the screen. With the
+  cookie fallback, copy the full Cookie request header again and run
+  `pbpaste | bin/mfp-auth`.
+- **`bin/mfpctl login` fails:** read `~/Library/Logs/mfp-mason/login.log`. It
+  records which selectors matched. If MFP changed its login page, they need
+  updating in `scripts/mfp_login.py`. Exit codes:
+  - 4: no Keychain item
+  - 5: MFP rejected the email or password
+  - 6: timed out, usually an unfinished captcha or 2FA
+
+  A failed run saves `login-failure.png` in the same folder. It may show your
+  email; the folder is private (0700).
+- **The login hangs with no window activity:** a hidden Keychain prompt is
+  probably waiting. Look for it on the Mac's screen and click **Always Allow**.
 - **Rejected within minutes of auth, or `rotated: no`:** you probably pasted
   only the session token, or logged out of MFP in that browser. Re-auth with the
   full Cookie header and stay logged in.

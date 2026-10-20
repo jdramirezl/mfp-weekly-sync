@@ -40,7 +40,10 @@ write your diary. So:
 ```bash
 git clone <this repo> ~/code/mfp-mason && cd ~/code/mfp-mason
 scripts/install-mac.sh --username <mfp username>   # add --with-tunnel for ChatGPT access
-pbpaste | bin/mfp-auth            # after copying the full Cookie request header (see runbook step 4)
+# Recommended: the bot's own login (runbook step 4): MFP_LOGIN_EMAIL in mason.env, then
+security add-generic-password -s mfp-login -a 'you@example.com' -w   # prompts for the password
+bin/mfpctl login                  # at the Mac's screen; finish any captcha/2FA in the window
+# Fallback: pbpaste | bin/mfp-auth   (after copying the full Cookie request header)
 bin/mfpctl install
 sleep 20 && bin/mfpctl status     # Mason takes ~10 s to start
 ```
@@ -58,6 +61,7 @@ Windows setup, is in [docs/mac-runbook.md](docs/mac-runbook.md).
 | `mfpctl status` | launchd state of each agent plus a live MCP `initialize` probe |
 | `mfpctl logs [-f]` | Show or follow `~/Library/Logs/mfp-mason/*.log` |
 | `mfpctl health [--simulate-fail mcp\|auth\|tunnel]` | Run the health check now |
+| `mfpctl login [--timeout S]` | Log the bot in with its own email + Keychain password (headed Chromium; recommended) |
 | `mfpctl auth [--username NAME]` | Re-authenticate from a piped cookie: `pbpaste \| mfpctl auth` (same as `bin/mfp-auth`) |
 | `mfpctl refresh` | Rotate the MFP session now (also runs weekly, Sunday 04:30) |
 | `mfpctl tunnel enable` / `disable` / `status` | Manage the optional ChatGPT tunnel |
@@ -83,15 +87,20 @@ Mason refreshes the MFP session only when a call is rejected, and only by
 sliding MFP's existing NextAuth session. It never redoes an SSO login.
 `com.jdrami.mfp-refresh` also rotates it proactively every Sunday at 04:30 so
 an idle session doesn't age out. A session that has fully expired or was
-revoked needs a re-auth: copy the full Cookie request header again and run
-`pbpaste | bin/mfp-auth`. Don't log out of MFP in that browser. See
+revoked is healed automatically: the health check tries a refresh, then (at
+most once per 6 h) a password re-login with the bot's own credentials, and
+alerts only if both fail. With its own login the bot doesn't share a session
+with your browser or phone, so you can use MFP freely. The cookie-paste fallback
+(`pbpaste | bin/mfp-auth`) stays tied to your browser session. See
 [docs/mac-runbook.md](docs/mac-runbook.md#session-longevity-sso).
 
 ## Layout
 
 ```
 bin/mfpctl                    service control
-bin/mfp-auth                  piped-cookie (re)authentication
+bin/mfp-auth                  piped-cookie (re)authentication (fallback)
+scripts/login-mfp.sh          bot-owned password login (mfpctl login, auto re-login)
+scripts/mfp_login.py          the Playwright login itself, run with Mason's Python
 scripts/install-mac.sh        idempotent installer: standalone uv, Python 3.13 (--dry-run, --with-tunnel, --username)
 scripts/mason-run.sh          Mason entry point (loads mason.env, loopback only)
 scripts/health-check.sh       6-hourly check + Telegram alert on state change

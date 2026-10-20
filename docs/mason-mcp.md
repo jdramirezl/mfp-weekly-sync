@@ -28,7 +28,13 @@ claude mcp add --transport http myfitnesspal http://127.0.0.1:8484/mcp
   installer always includes, Mason boots a headless Chromium profile when
   MyFitnessPal rejects the session mid-call, lets the site rotate the token,
   saves it and retries the call.
-- Authenticate with the **full Cookie request header** (DevTools → Network →
+- **Recommended: give the bot its own login** with `bin/mfpctl login`, using
+  `MFP_LOGIN_EMAIL` plus the Keychain item `mfp-login`. A cookie copied from
+  your browser shares one session lineage with it, so whichever side refreshes
+  first can invalidate the other. With its own login, the bot is independent
+  and you can use MFP freely on your phone and in your browser. The health
+  check re-logs in automatically, at most once per 6 h.
+- Fallback: authenticate with the **full Cookie request header** (DevTools → Network →
   `www.myfitnesspal.com` → Request Headers → `cookie` → Copy value), piped
   with `pbpaste | bin/mfp-auth`. On SSO accounts, a lone session-token cookie
   was rejected within minutes and never rotated. Afterwards, don't log out of
@@ -91,8 +97,8 @@ hub enforces this with approvals.
   `curl_cffi` target) in `~/.config/mfp-mason/mason.env`, then run
   `bin/mfpctl install`. Datacenter IPs are challenged far more than home ones.
 - **Session expired:** run `mfp-mcp auth --check`, then `bin/mfpctl refresh`.
-  If it's still rejected, use `pbpaste | bin/mfp-auth` with a freshly copied
-  full Cookie header.
+  If it's still rejected, run `bin/mfpctl login` (or, with the cookie
+  fallback, `pbpaste | bin/mfp-auth` with a freshly copied full Cookie header).
 - **"couldn't read your MyFitnessPal profile":** set `MFP_USERNAME` to your
   username (not email) in `mason.env`, then run `bin/mfpctl restart` and
   `pbpaste | bin/mfp-auth`. MyFitnessPal's profile endpoint returns 500 for
