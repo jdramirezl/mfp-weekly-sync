@@ -24,5 +24,11 @@ case "$BIN" in /*) ;; *) die "MFP_MCP_BIN must be an absolute path (got '$BIN')"
 [ -x "$BIN" ] || die "$BIN is not executable; re-run scripts/install-mac.sh"
 case "$MFP_PORT" in '' | *[!0-9]*) die "MFP_PORT must be a number" ;; esac
 
-export MFP_MCP_DATA_DIR
+export MFP_MCP_DATA_DIR MFP_LOG_DIR
+# Default: Mason's own Python runs mason_entry.py, which loads the cookie-
+# rotation shim (logs MFP Set-Cookie rotations; persists them only with
+# MFP_PERSIST_ROTATIONS=1) and then Mason's CLI. MFP_COOKIE_SHIM=0 = plain binary.
+if [ "${MFP_COOKIE_SHIM:-1}" != 0 ] && [ -f "$SCRIPT_DIR/mason_entry.py" ] && PY="$(mason_python "$BIN")"; then
+  exec "$PY" "$SCRIPT_DIR/mason_entry.py" --http --host "$REQUIRED_HOST" --port "$MFP_PORT"
+fi
 exec "$BIN" --http --host "$REQUIRED_HOST" --port "$MFP_PORT"

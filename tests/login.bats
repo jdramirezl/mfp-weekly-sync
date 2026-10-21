@@ -89,7 +89,7 @@ cookie_out() { sed -n "s/^COOKIE_OUT=\(.*\) MODE=.*/\1/p" "$STUB_LOG" | head -n 
 }
 
 @test "success: patchright login -> 0600 handoff file -> Mason save, then auth check" {
-  run "$LOGIN" --no-health --timeout 90
+  MFP_LOGIN_AUTO=1 run "$LOGIN" --no-health --timeout 90
   [ "$status" -eq 0 ]
   [[ "$output" == *"✅ Logged in as fakeuser (token $(hash8 OLD-TOKEN) -> $(hash8 NEW-TOKEN))"* ]] || false
   out="$(cookie_out)"
@@ -117,7 +117,7 @@ cookie_out() { sed -n "s/^COOKIE_OUT=\(.*\) MODE=.*/\1/p" "$STUB_LOG" | head -n 
 @test "a failed login skips the save, restarts Mason and removes the handoff file" {
   touch "$STUB_DIR/loaded-com.jdrami.mfp-mcp"
   echo 5 >"$STUB_DIR/login.rc"
-  run "$LOGIN" --no-health
+  MFP_LOGIN_AUTO=1 run "$LOGIN" --no-health
   [ "$status" -eq 5 ]
   [[ "$output" == *"❌ Login failed (exit 5: MFP rejected the email/password (fields verified"* ]] || false
   ! grep -q tool-python "$STUB_LOG" || false
@@ -134,7 +134,7 @@ cookie_out() { sed -n "s/^COOKIE_OUT=\(.*\) MODE=.*/\1/p" "$STUB_LOG" | head -n 
 
 @test "timeout exit points to --manual and is recorded with its exit code" {
   echo 6 >"$STUB_DIR/login.rc"
-  run "$LOGIN" --no-health
+  MFP_LOGIN_AUTO=1 run "$LOGIN" --no-health
   [ "$status" -eq 6 ]
   [[ "$output" == *"Turnstile/captcha not cleared; try bin/mfpctl login --manual at the screen"* ]] || false
   [[ "$(cat "$MFP_STATE_DIR/relogin.last")" == *" 6" ]] || false
@@ -142,7 +142,7 @@ cookie_out() { sed -n "s/^COOKIE_OUT=\(.*\) MODE=.*/\1/p" "$STUB_LOG" | head -n 
 
 @test "exit 9 (consent banner) is explained and recorded" {
   echo 9 >"$STUB_DIR/login.rc"
-  run "$LOGIN" --no-health
+  MFP_LOGIN_AUTO=1 run "$LOGIN" --no-health
   [ "$status" -eq 9 ]
   [[ "$output" == *"MFP rejected the login after a cookie-consent banner / field problem (inputs may have been lost); re-run bin/mfpctl login at the screen"* ]] || false
   [[ "$(cat "$MFP_STATE_DIR/relogin.last")" == *" 9" ]] || false
@@ -287,4 +287,55 @@ allowed() { bash -c ". '$REPO_ROOT/scripts/lib/common.sh'; mfp_init_paths; relog
   echo $(($(date +%s) - 21601)) >"$MFP_STATE_DIR/relogin.last"
   run allowed
   [ "$status" -eq 0 ]
+}
+
+@test "a manual login never records the rate-limit state" {
+  run "$LOGIN" --no-health
+  [ "$status" -eq 0 ]
+  [ ! -e "$MFP_STATE_DIR/relogin.last" ]
+}
+
+@test "a manual login works while the automatic re-login is rate-limited" {
+  mkdir -p "$MFP_STATE_DIR"
+  echo "$(date +%s) 5" >"$MFP_STATE_DIR/relogin.last"
+  run "$MFPCTL" login --no-health
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"✅ Logged in"* ]] || false
+  [[ "$(cat "$MFP_STATE_DIR/relogin.last")" == *" 5" ]] || false
+}
+
+interval() { bash -c ". '$REPO_ROOT/scripts/lib/common.sh'; mfp_init_paths; relogin_interval"; }
+
+@test "relogin interval: 30 min after a success, 1 h after 6/7/9, 6 h after 5/4/8 or old format" {
+  mkdir -p "$MFP_STATE_DIR"
+  for case in "0 1800" "6 3600" "7 3600" "9 3600" "5 21600" "4 21600" "8 21600"; do
+    set -- $case
+    echo "$(date +%s) $1" >"$MFP_STATE_DIR/relogin.last"
+    [ "$(interval)" = "$2" ] || { echo "exit $1 -> $(interval), want $2"; false; }
+  done
+  date +%s >"$MFP_STATE_DIR/relogin.last"
+  [ "$(interval)" = 21600 ]
+}
+
+@test "relogin is allowed 30 min after a successful login (the 16:48 -> 22:48 bug)" {
+  mkdir -p "$MFP_STATE_DIR"
+  echo "$(($(date +%s) - 1700)) 0" >"$MFP_STATE_DIR/relogin.last"
+  run allowed
+  [ "$status" -ne 0 ]
+  echo "$(($(date +%s) - 1801)) 0" >"$MFP_STATE_DIR/relogin.last"
+  run allowed
+  [ "$status" -eq 0 ]
+}
+
+@test "daily cap: at most 4 automatic re-logins per 24 h" {
+  mkdir -p "$MFP_STATE_DIR"
+  now=$(date +%s)
+  printf '%s\n' $((now - 90000)) $((now - 80000)) $((now - 60000)) $((now - 40000)) >"$MFP_STATE_DIR/relogin.history"
+  run allowed
+  [ "$status" -eq 0 ]
+  echo $((now - 20000)) >>"$MFP_STATE_DIR/relogin.history"
+  run allowed
+  [ "$status" -ne 0 ]
+  run bash -c ". '$REPO_ROOT/scripts/lib/common.sh'; mfp_init_paths; relogin_block_reason"
+  [ "$output" = "daily cap 4/24h" ]
 }

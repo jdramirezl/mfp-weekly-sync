@@ -224,3 +224,47 @@ run_wrapper() {
   [ "$status" -ne 0 ]
   [[ "$output" == *"Usage: mfpctl"* ]] || false
 }
+
+@test "wrapper runs Mason through mason_entry.py (cookie shim) by default" {
+  make_fake_mason_py
+  "$MFPCTL" install
+  [ -f "$MFP_STATE_DIR/bin/mason_entry.py" ]
+  [ -f "$MFP_STATE_DIR/bin/mason_cookie_shim.py" ]
+  run run_wrapper MFP_MASON_PY="$MFP_MASON_PY"
+  [ "$status" -eq 0 ]
+  grep -qx "mason-py $MFP_STATE_DIR/bin/mason_entry.py --http --host 127.0.0.1 --port 8484" "$STUB_LOG"
+}
+
+@test "MFP_COOKIE_SHIM=0 in mason.env runs the plain mfp-mcp binary" {
+  make_fake_mason_py
+  "$MFPCTL" install
+  mkdir -p "$MFP_CONFIG_DIR"
+  printf 'MFP_COOKIE_SHIM=0\n' >"$MFP_CONFIG_DIR/mason.env"
+  chmod 600 "$MFP_CONFIG_DIR/mason.env"
+  run run_wrapper MFP_MASON_PY="$MFP_MASON_PY"
+  [ "$status" -eq 0 ]
+  ! grep -q '^mason-py' "$STUB_LOG" || false
+  [ "$(cat "$STUB_DIR/serve-argv")" = "--http --host 127.0.0.1 --port 8484" ]
+}
+
+@test "mason.env can enable MFP_PERSIST_ROTATIONS for the service" {
+  make_fake_mason_py
+  "$MFPCTL" install
+  mkdir -p "$MFP_CONFIG_DIR"
+  printf 'MFP_PERSIST_ROTATIONS=1\n' >"$MFP_CONFIG_DIR/mason.env"
+  chmod 600 "$MFP_CONFIG_DIR/mason.env"
+  run run_wrapper MFP_MASON_PY="$MFP_MASON_PY"
+  grep -qx 'MFP_PERSIST_ROTATIONS=1' "$STUB_DIR/serve-env"
+}
+
+@test "mfpctl rotation shows the rotation log" {
+  run "$MFPCTL" rotation
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"no cookie-rotation log yet"* ]] || false
+  mkdir -p "$MFP_LOG_DIR"
+  for i in 1 2 3 4 5; do echo "line $i" >>"$MFP_LOG_DIR/cookie-rotation.log"; done
+  run "$MFPCTL" rotation 2
+  [ "$output" = "$(printf 'line 4\nline 5')" ]
+  run "$MFPCTL" help
+  [[ "$output" == *"  rotation [N]"* ]] || false
+}

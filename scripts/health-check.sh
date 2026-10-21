@@ -116,7 +116,7 @@ auth_check_once() {
     return 1
   fi
   rc=0
-  out="$("$bin" auth --check 2>&1)" || rc=$?
+  out="$(mason_cli "$SCRIPT_DIR" "$bin" auth --check 2>&1)" || rc=$?
   [ "$rc" -eq 0 ] && return 0
   AUTH_DETAIL="$(printf '%s\n' "$out" | grep -E '^(Status|Session):' | tail -n 1 |
     sed -e 's/[[:space:]][[:space:]]*/ /g' | cut -c1-200)"
@@ -164,11 +164,12 @@ check_auth() {
   elif ! keychain_has_login "$MFP_LOGIN_EMAIL"; then
     tried="$tried; no Keychain password for $LOGIN_KEYCHAIN_SERVICE"
   elif ! relogin_allowed; then
-    tried="$tried; re-login skipped (rate limit, next after $(relogin_next_hhmm))"
-    hlog "re-login skipped (rate limit, next after $(relogin_next_hhmm))"
+    tried="$tried; re-login skipped ($(relogin_block_reason), next after $(relogin_next_hhmm))"
+    hlog "re-login skipped ($(relogin_block_reason), next after $(relogin_next_hhmm))"
   else
     hlog "trying password re-login"
-    /bin/bash "$LOGIN_SCRIPT" --no-health >/dev/null 2>&1 || true
+    relogin_record_auto
+    MFP_LOGIN_AUTO=1 /bin/bash "$LOGIN_SCRIPT" --no-health >/dev/null 2>&1 || true
     if auth_check_once; then
       hlog "healed by re-login"
       return

@@ -63,6 +63,7 @@ Windows setup, is in [docs/mac-runbook.md](docs/mac-runbook.md).
 | `mfpctl start` / `stop` / `restart` | Load or kickstart / unload / restart Mason in place |
 | `mfpctl status` | launchd state of each agent plus a live MCP `initialize` probe |
 | `mfpctl logs [-f]` | Show or follow `~/Library/Logs/mfp-mason/*.log` |
+| `mfpctl rotation [N]` | Show MFP cookie-rotation events seen by the shim (names + hashes only) |
 | `mfpctl health [--simulate-fail mcp\|auth\|tunnel]` | Run the health check now |
 | `mfpctl login [--timeout S]` | Log the bot in with its own email + Keychain password, driving the installed Google Chrome via patchright (recommended) |
 | `mfpctl login --manual` | Fallback when Cloudflare fails: log in by hand in Chrome, quit it (⌘Q), and the session is handed to Mason |
@@ -106,6 +107,8 @@ bin/mfp-auth                  piped-cookie (re)authentication (fallback)
 scripts/login-mfp.sh          bot-owned password login (mfpctl login, auto re-login)
 scripts/mfp_login.py          the login itself: patchright + installed Chrome, in its own venv/profile
 scripts/save_session.py       hands the harvested cookies to Mason (save_cookies + seed_profile)
+scripts/mason_entry.py        Mason's entry point, loading the cookie-rotation shim first
+scripts/mason_cookie_shim.py  logs (optionally persists) MFP Set-Cookie rotations
 scripts/install-mac.sh        idempotent installer: standalone uv, Python 3.13 (--dry-run, --with-tunnel, --username)
 scripts/mason-run.sh          Mason entry point (loads mason.env, loopback only)
 scripts/health-check.sh       6-hourly check + Telegram alert on state change

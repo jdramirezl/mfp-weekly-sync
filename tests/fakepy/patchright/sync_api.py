@@ -2,7 +2,7 @@
 the launch uses the undetected configuration (installed Chrome, headed, no
 viewport, and nothing else that could fingerprint automation)."""
 from playwright.sync_api import *  # noqa: F401,F403
-from playwright.sync_api import Chromium as _Chromium, TimeoutError, rec  # noqa: F401
+from playwright.sync_api import Chromium as _Chromium, TargetClosedError, TimeoutError, rec  # noqa: F401
 
 ALLOWED = {"user_data_dir", "channel", "headless", "no_viewport"}
 

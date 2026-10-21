@@ -19,6 +19,7 @@ Service commands:
   restart            Restart the Mason service in place.
   status             Show launchd state and probe the MCP endpoint.
   logs [-f]          Show (or follow) the service logs.
+  rotation [N]       Show the last N (30) MFP cookie-rotation log lines (names + hashes only).
 
 Session:
   auth [--username NAME]
@@ -93,7 +94,7 @@ RUNTIME_BIN_DIR="$MFP_STATE_DIR/bin"
 install_runtime_scripts() {
   local f
   run mkdir -p "$RUNTIME_BIN_DIR/lib"
-  for f in mason-run.sh health-check.sh tunnel-run.sh refresh-session.sh login-mfp.sh mfp_login.py save_session.py; do
+  for f in mason-run.sh health-check.sh tunnel-run.sh refresh-session.sh login-mfp.sh mfp_login.py save_session.py mason_entry.py mason_cookie_shim.py; do
     [ -f "$REPO_ROOT/scripts/$f" ] || continue
     run cp "$REPO_ROOT/scripts/$f" "$RUNTIME_BIN_DIR/$f"
     run chmod 755 "$RUNTIME_BIN_DIR/$f"
@@ -298,6 +299,16 @@ cmd_health() {
   exec /bin/bash "$REPO_ROOT/scripts/health-check.sh" "$@"
 }
 
+cmd_rotation() {
+  local n="${1:-30}" f="$MFP_LOG_DIR/cookie-rotation.log"
+  case "$n" in '' | *[!0-9]*) die "usage: mfpctl rotation [N]" ;; esac
+  if [ ! -f "$f" ]; then
+    echo "no cookie-rotation log yet ($f); it appears once Mason runs with the shim"
+    return 0
+  fi
+  tail -n "$n" "$f"
+}
+
 cmd_login() {
   local bin
   if [ -z "${MFP_MCP_BIN:-}" ] && bin="$(DRY_RUN=0 resolve_mfp_mcp_bin 2>/dev/null)"; then
@@ -400,6 +411,7 @@ case "$cmd" in
   health) cmd_health "$@" ;;
   refresh) cmd_refresh "$@" ;;
   login) cmd_login "$@" ;;
+  rotation) cmd_rotation "$@" ;;
   auth) exec "$REPO_ROOT/bin/mfp-auth" "$@" ;;
   tunnel) cmd_tunnel "$@" ;;
   help) usage ;;

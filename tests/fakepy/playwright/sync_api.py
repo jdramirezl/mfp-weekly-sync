@@ -5,7 +5,9 @@ FAKE_PW_MODE   success | already | challenge | rejected | spanish_rejected |
                turnstile_widget_alert | post_submit_turnstile |
                turnstile_failed | turnstile_stuck_enabled | goto_timeout |
                manual | manual_empty | consent | consent_late | consent_role |
-               consent_stuck | swallow_once | consent_then_rejected
+               consent_stuck | swallow_once | consent_then_rejected |
+               closed_after_submit | context_closed_after_submit |
+               closed_before_submit | closed_no_session
 
 Consent modes: a cookie banner swallows typing while visible. Typed values are
 kept per field and returned by input_value(); clicking submit while a field is
@@ -40,6 +42,16 @@ FAIL_POLLS = int(os.environ.get("FAKE_TS_FAIL_POLLS", "4"))  # turnstile_failed:
 class TimeoutError(Exception):
     """Mirrors playwright.sync_api.TimeoutError."""
 
+
+class TargetClosedError(Exception):
+    """Mirrors playwright's TargetClosedError."""
+
+    def __init__(self, msg="Target page, context or browser has been closed"):
+        super().__init__(msg)
+
+
+CLOSE_MODES = {"closed_after_submit", "context_closed_after_submit", "closed_no_session"}
+
 TS_INPUT = 'input[name="cf-turnstile-response"]'
 TS_IFRAME = 'iframe[src*="challenges.cloudflare.com"]'
 TS_BOX = ".cf-turnstile"
@@ -63,6 +75,8 @@ class State:
     values = {"email": "", "password": ""}
     consent_visible = MODE in ("consent", "consent_role", "consent_stuck", "consent_then_rejected")
     swallowed_once = False
+    page_closed = False  # the original page went away (popup / navigation)
+    context_closed = False  # the whole browser context went away
 
 
 CONSENT_ID = "#onetrust-accept-btn-handler"
@@ -236,6 +250,15 @@ class El:
                 S.ts_reset = S.ticks
             else:
                 log_in_now()
+        elif MODE in CLOSE_MODES:
+            # The submit goes out (and, except closed_no_session, MFP logs us
+            # in), then Chrome's popups / navigation close the target.
+            if MODE != "closed_no_session":
+                S.logged_in = True
+            S.url = HOME
+            S.page_closed = True
+            if MODE == "context_closed_after_submit":
+                S.context_closed = True
 
 
 class Locator:
@@ -258,23 +281,41 @@ def submit_el(desc):
 
 
 class Page:
+    def __init__(self):
+        # A page created after the original one closed is live.
+        self.fresh = S.page_closed
+
+    def _check(self):
+        if S.page_closed and not self.fresh:
+            raise TargetClosedError()
+
+    def is_closed(self):
+        return S.page_closed and not self.fresh
+
     @property
     def url(self):
+        self._check()
         return S.url
 
     def goto(self, url, **kw):
+        self._check()
         rec(f"goto {url}")
         if MODE == "goto_timeout":
             raise TimeoutError("Timeout 30000ms exceeded.")
         S.url = HOME if MODE in ("already", "manual") or not url.endswith("/login") else url
 
     def frame_locator(self, sel):
+        self._check()
         return FrameLocator(sel)
 
     def get_by_label(self, name, exact=False):
+        self._check()
+        if MODE == "closed_before_submit":
+            raise TargetClosedError()
         return Locator([El("field", f"label={name}")] if name in LABELS else [])
 
     def get_by_role(self, role, name=None):
+        self._check()
         if role == "button" and name is not None and MODE == "consent_role" and S.consent_visible:
             if name.search("Aceptar todo"):
                 return Locator([El("consent", "role-consent", "Aceptar todo")])
@@ -284,6 +325,7 @@ class Page:
         return Locator([submit_el("role-button")] if ok else [])
 
     def locator(self, sel):
+        self._check()
         if sel == TS_INPUT:
             return Locator([El("ts_input", sel, visible=False)] if ts_present() else [])
         if sel == TS_IFRAME:
@@ -312,6 +354,7 @@ class Page:
         return Locator([])
 
     def inner_text(self, sel):
+        self._check()
         if MODE == "challenge" and S.submitted:
             return "Please complete the security challenge"
         if MODE == "turnstile_widget_alert":
@@ -319,10 +362,12 @@ class Page:
         return "Member Login Email Address Password Log in or Continue with Google"
 
     def wait_for_timeout(self, ms):
+        self._check()
         tick()
         time.sleep(0.002)
 
     def screenshot(self, path):
+        self._check()
         rec(f"screenshot {path}")
         open(path, "wb").close()
 
@@ -344,9 +389,20 @@ class FrameLocator:
 
 class Context:
     def __init__(self):
-        self.pages = [Page()]
+        self.fresh = S.context_closed
+        self._pages = [Page()]
+
+    def _check(self):
+        if S.context_closed and not self.fresh:
+            raise TargetClosedError("Target page, context or browser has been closed")
+
+    @property
+    def pages(self):
+        self._check()
+        return [p for p in self._pages if not p.is_closed()]
 
     def cookies(self, url=None):
+        self._check()
         base = [{"name": "_ga", "value": "GA1", "domain": ".myfitnesspal.com"},
                 {"name": "other", "value": "x", "domain": ".example.com"}]
         if S.logged_in:
@@ -356,7 +412,11 @@ class Context:
         return base
 
     def new_page(self):
-        return self.pages[0]
+        self._check()
+        page = Page()
+        self._pages.append(page)
+        rec("new_page")
+        return page
 
     def close(self):
         rec("close")

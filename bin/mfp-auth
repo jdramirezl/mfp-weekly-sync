@@ -167,7 +167,7 @@ if [ "$rc" -ne 0 ]; then
 fi
 
 check_rc=0
-check="$(MFP_USERNAME="$USERNAME" MFP_MCP_DATA_DIR="$MFP_MCP_DATA_DIR" "$BIN" auth --check 2>&1)" || check_rc=$?
+check="$(MFP_USERNAME="$USERNAME" MFP_MCP_DATA_DIR="$MFP_MCP_DATA_DIR" mason_cli "$REPO_ROOT/scripts" "$BIN" auth --check 2>&1)" || check_rc=$?
 status_line="$(printf '%s\n' "$check" | sed -n 's/^Status:[[:space:]]*//p' | head -n 1)"
 refresh_line="$(printf '%s\n' "$check" | sed -n 's/^Auto-refresh:[[:space:]]*//p' | head -n 1)"
 if [ "$check_rc" -ne 0 ]; then

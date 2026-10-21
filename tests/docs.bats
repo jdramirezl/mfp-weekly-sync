@@ -66,3 +66,10 @@ doc_files() {
   grep -q '  - 9: ' "$REPO_ROOT/docs/mac-runbook.md"
   grep -q "tr -d '\\\\n' | wc -c" "$REPO_ROOT/docs/mac-runbook.md"
 }
+
+@test "runbook documents the cookie-rotation shim and the new re-login limits" {
+  grep -q 'MFP_PERSIST_ROTATIONS=1' "$REPO_ROOT/docs/mac-runbook.md"
+  grep -q 'mfpctl rotation' "$REPO_ROOT/docs/mac-runbook.md"
+  grep -q 'never rate-limited' "$REPO_ROOT/docs/mac-runbook.md"
+  grep -q 'MFP_PERSIST_ROTATIONS' "$REPO_ROOT/config/mason.env.example"
+}

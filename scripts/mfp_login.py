@@ -97,6 +97,22 @@ ERROR_IGNORE_RE = re.compile(r"cloudflare|verif|turnstile|human", re.I)
 EXIT_OK, EXIT_NO_KEYCHAIN, EXIT_REJECTED, EXIT_TIMEOUT, EXIT_OTHER = 0, 4, 5, 6, 7
 EXIT_REJECTED_AFTER_CONSENT = 9
 
+# Set once the login form has been submitted. On the server Mac, Chrome's
+# "save password" / "translate" popups and the post-login navigation to /es
+# closed the page right after a SUCCESSFUL submit (TargetClosedError, exit 7)
+# although MFP had already logged in.
+SUBMIT_STATE = {"submitted": False}
+CLOSED_RE = re.compile(r"target page, context or browser has been closed|target closed|has been closed", re.I)
+
+# Written into the login profile's Default/Preferences before launch (never as
+# launch args, which can leak automation): no password-save or translate bars.
+CHROME_PREFS = {
+    "credentials_enable_service": False,
+    "profile": {"password_manager_enabled": False},
+    "translate": {"enabled": False},
+}
+TRANSLATE_BLOCKED = ["en", "es"]
+
 # Cookie-consent banners (OneTrust / Didomi / generic). On the server Mac a
 # banner took focus or swallowed the typed fields, and the empty submit came
 # back as "Incorrect username or password".
@@ -515,6 +531,7 @@ def login(context, page, email, password_source, timeout):
     clear_consent(page, tracker, deadline, timeout)
     verify_fields(page, tracker, fields, deadline, timeout)
     fields = None
+    SUBMIT_STATE["submitted"] = True  # from here a closed target means "check the session"
     submit.click()
 
     told_challenge = False
@@ -566,6 +583,92 @@ def login(context, page, email, password_source, timeout):
         if time.monotonic() >= deadline:
             raise LoginError(EXIT_TIMEOUT, f"no MFP session after {timeout}s (last state: {tracker.last})")
         page.wait_for_timeout(2000)
+
+
+def _deep_merge(dst, src):
+    for key, value in src.items():
+        if isinstance(value, dict) and isinstance(dst.get(key), dict):
+            _deep_merge(dst[key], value)
+        else:
+            dst[key] = value
+    return dst
+
+
+def write_chrome_prefs(profile):
+    """Merge CHROME_PREFS into <profile>/Default/Preferences, atomically.
+    Corrupt JSON is kept as Preferences.bak and replaced."""
+    default = Path(profile) / "Default"
+    default.mkdir(parents=True, exist_ok=True)
+    path = default / "Preferences"
+    prefs = {}
+    if path.exists():
+        try:
+            prefs = json.loads(path.read_text() or "{}")
+            if not isinstance(prefs, dict):
+                raise ValueError("not an object")
+        except (OSError, ValueError):
+            try:
+                os.replace(path, default / "Preferences.bak")
+            except OSError:
+                pass
+            prefs = {}
+    _deep_merge(prefs, json.loads(json.dumps(CHROME_PREFS)))
+    blocked = prefs.get("translate_blocked_languages")
+    if not isinstance(blocked, list):
+        blocked = []
+    for lang in TRANSLATE_BLOCKED:
+        if lang not in blocked:
+            blocked.append(lang)
+    prefs["translate_blocked_languages"] = blocked
+    tmp = default / "Preferences.mfp-mason.tmp"
+    tmp.write_text(json.dumps(prefs))
+    os.replace(tmp, path)
+    say("chrome prefs: password manager off, translate off")
+
+
+def is_target_closed(exc, closed_type):
+    if closed_type is not None and isinstance(exc, closed_type):
+        return True
+    return bool(CLOSED_RE.search(str(exc) or ""))
+
+
+def recheck_session(pw, context, launch, closed_type):
+    """After the target closed post-submit: find or open a live page, load MFP
+    and wait for the session cookie. Relaunches the context once if it is
+    gone. Returns (context, page)."""
+    wait = int(os.environ.get("MFP_RECHECK_WAIT") or "30")
+    say("page closed after submit; re-checking the session")
+    for attempt in (1, 2):
+        try:
+            pages = [p for p in context.pages if not _is_closed(p)]
+            page = pages[-1] if pages else context.new_page()
+            page.goto(MFP_URL, wait_until="domcontentloaded", timeout=30000)
+            deadline = time.monotonic() + wait
+            while not has_session(context):
+                if time.monotonic() >= deadline:
+                    raise LoginError(EXIT_TIMEOUT, "no MFP session after the page closed "
+                                     "(last state: page closed after submit)")
+                page.wait_for_timeout(1000)
+            return context, page
+        except LoginError:
+            raise
+        except Exception as exc:
+            if attempt == 2 or not is_target_closed(exc, closed_type):
+                raise
+            say("browser context closed after submit; relaunching once")
+            try:
+                context.close()
+            except Exception:
+                pass
+            context = launch()
+    raise LoginError(EXIT_TIMEOUT, "no MFP session (last state: page closed after submit)")
+
+
+def _is_closed(page):
+    try:
+        return bool(page.is_closed())
+    except Exception:
+        return False
 
 
 def harvest(context, out_path):
@@ -627,32 +730,48 @@ def main(argv):
             say(str(exc))
             return exc.code
 
+    import patchright.sync_api as patchright_api
     from patchright.sync_api import TimeoutError as PWTimeout
     from patchright.sync_api import sync_playwright
+    closed_type = getattr(patchright_api, "TargetClosedError", None)
 
     Path(profile).mkdir(parents=True, exist_ok=True)
     os.chmod(profile, 0o700)
+    try:
+        write_chrome_prefs(profile)
+    except OSError as exc:
+        say(f"could not write chrome prefs ({type(exc).__name__}); continuing")
     code = EXIT_OTHER
+    SUBMIT_STATE["submitted"] = False
     with sync_playwright() as pw:
-        # The undetected configuration: installed Chrome, headed, no viewport
-        # override, and NO custom user agent, headers or extra args.
-        context = pw.chromium.launch_persistent_context(
-            user_data_dir=profile, channel="chrome", headless=False, no_viewport=True)
+        def launch():
+            # The undetected configuration: installed Chrome, headed, no
+            # viewport override, and NO custom user agent, headers or args.
+            return pw.chromium.launch_persistent_context(
+                user_data_dir=profile, channel="chrome", headless=False, no_viewport=True)
+
+        context = launch()
         page = context.pages[0] if context.pages else context.new_page()
         try:
-            if manual:
-                manual_harvest(context, page)
-            else:
-                login(context, page, email, lambda: password, timeout)
+            try:
+                if manual:
+                    manual_harvest(context, page)
+                else:
+                    login(context, page, email, lambda: password, timeout)
+            except Exception as exc:
+                if SUBMIT_STATE["submitted"] and is_target_closed(exc, closed_type):
+                    context, page = recheck_session(pw, context, launch, closed_type)
+                else:
+                    raise
             n = harvest(context, out_path)
             if not n:
                 raise LoginError(EXIT_OTHER, "logged in, but no session cookie to save")
-            say(f"final page {url_path(page)}")
+            say(f"final page {safe_path(page)}")
             say(f"Harvested {n} cookies.")
             code = EXIT_OK
         except LoginError as exc:
             say(str(exc))
-            say(f"final page {url_path(page)}")
+            say(f"final page {safe_path(page)}")
             screenshot(page)
             code = exc.code
         except PWTimeout:
@@ -665,8 +784,18 @@ def main(argv):
             code = EXIT_OTHER
         finally:
             password = None
-            context.close()
+            try:
+                context.close()
+            except Exception:
+                pass
     return code
+
+
+def safe_path(page):
+    try:
+        return url_path(page)
+    except Exception:
+        return "(page closed)"
 
 
 if __name__ == "__main__":

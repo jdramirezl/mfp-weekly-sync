@@ -99,11 +99,15 @@ if [ "$DRY_RUN" = 1 ]; then
 fi
 
 mkdir -p "$MFP_LOG_DIR" "$MFP_STATE_DIR"
-# Record the attempt first: the re-login rate limit counts failures too. The
-# exit code is added once known (exit 6 = Turnstile/timeout retries sooner).
+# Automatic attempts (from the health check, MFP_LOGIN_AUTO=1) are recorded for
+# the re-login rate limit; a manual `mfpctl login` is never rate-limited and
+# never recorded. The exit code decides the next interval (see common.sh).
 attempt_at="$(date +%s)"
-printf '%s\n' "$attempt_at" >"$MFP_STATE_DIR/relogin.last"
-record_exit() { printf '%s %s\n' "$attempt_at" "$1" >"$MFP_STATE_DIR/relogin.last"; }
+record_exit() {
+  [ "${MFP_LOGIN_AUTO:-0}" = 1 ] || return 0
+  printf '%s %s\n' "$attempt_at" "$1" >"$MFP_STATE_DIR/relogin.last"
+}
+record_exit ""
 
 # The login environment: patchright venv + installed Chrome + Mason's Python.
 "$LOGIN_PY" -c 'import patchright' >/dev/null 2>&1 || { record_exit "$EXIT_ENV"; env_missing "patchright venv at $LOGIN_VENV"; }
@@ -186,7 +190,7 @@ if [ "$rc" -ne 0 ]; then
   result="$rc"
 else
   check_rc=0
-  check="$(MFP_USERNAME="${MFP_USERNAME:-}" MFP_MCP_DATA_DIR="$MFP_MCP_DATA_DIR" "$BIN" auth --check 2>&1)" || check_rc=$?
+  check="$(MFP_USERNAME="${MFP_USERNAME:-}" MFP_MCP_DATA_DIR="$MFP_MCP_DATA_DIR" mason_cli "$SCRIPT_DIR" "$BIN" auth --check 2>&1)" || check_rc=$?
   status_line="$(printf '%s\n' "$check" | sed -n 's/^Status:[[:space:]]*//p' | head -n 1)"
   if [ "$check_rc" -eq 0 ]; then
     user="$(printf '%s' "$status_line" | sed -n 's/.*connected as //p')"

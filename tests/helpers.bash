@@ -135,3 +135,26 @@ EOF
 }
 
 file_mode() { stat -f %Lp "$1"; }
+
+# A fake Mason tool Python for the mason_entry.py path: records argv as
+# "mason-py <args>" and, for `auth --check`, behaves like the fake mfp-mcp.
+make_fake_mason_py() {
+  local py="$TEST_HOME/mason-tool/bin/python"
+  mkdir -p "$(dirname "$py")"
+  cat >"$py" <<'EOF'
+#!/bin/bash
+printf 'mason-py' >>"$STUB_LOG"; for a in "$@"; do printf ' %s' "$a" >>"$STUB_LOG"; done; printf '\n' >>"$STUB_LOG"
+shift
+if [ "${1:-}" = auth ] && [ "${2:-}" = --check ]; then
+  rc="$(cat "$STUB_DIR/auth.rc" 2>/dev/null || echo 0)"
+  echo "Session:      from /fake/cookies.json"
+  if [ "$rc" = 0 ]; then echo "Status:       valid, connected as fakeuser"; else echo "Status:       rejected (expired)"; fi
+  echo "Auto-refresh: ready (profile at /fake/browser-profile)"
+  exit "$rc"
+fi
+if [ "${1:-}" = --http ]; then printf '%s\n' "$*" >"$STUB_DIR/serve-argv"; env >"$STUB_DIR/serve-env"; fi
+exit 0
+EOF
+  chmod +x "$py"
+  export MFP_MASON_PY="$py"
+}

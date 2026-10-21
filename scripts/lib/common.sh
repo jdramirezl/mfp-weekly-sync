@@ -143,6 +143,46 @@ resolve_tool_python() {
   printf '%s\n' "$MFP_HOME/.local/share/uv/tools/mfp-mcp/bin/python"
 }
 
+# mason_python BIN : Mason's own tool Python. MFP_MASON_PY (tests), else the
+# shebang of the mfp-mcp entry point (uv writes the tool env's python there),
+# else `uv tool dir`. Prints nothing and returns 1 if none is usable.
+mason_python() {
+  local bin="${1:-}" py d
+  if [ -n "${MFP_MASON_PY:-}" ]; then
+    [ -x "$MFP_MASON_PY" ] && printf '%s\n' "$MFP_MASON_PY"
+    [ -x "$MFP_MASON_PY" ]
+    return
+  fi
+  if [ -f "$bin" ]; then
+    py="$(head -n 1 "$bin" 2>/dev/null | sed -n 's/^#![[:space:]]*//p' | awk '{print $1}')"
+    case "$(basename "${py:-none}")" in
+      python*)
+        if [ -x "$py" ]; then
+          printf '%s\n' "$py"
+          return 0
+        fi
+        ;;
+    esac
+  fi
+  if have uv && d="$(uv tool dir 2>/dev/null)" && [ -x "$d/mfp-mcp/bin/python" ]; then
+    printf '%s\n' "$d/mfp-mcp/bin/python"
+    return 0
+  fi
+  return 1
+}
+
+# mason_cli DIR BIN ARGS... : run Mason's CLI through DIR/mason_entry.py (the
+# cookie-rotation shim) when possible, else the plain BIN. Same exit code.
+mason_cli() {
+  local dir="$1" bin="$2" py
+  shift 2
+  if [ "${MFP_COOKIE_SHIM:-1}" != 0 ] && [ -f "$dir/mason_entry.py" ] && py="$(mason_python "$bin")"; then
+    "$py" "$dir/mason_entry.py" "$@"
+    return
+  fi
+  "$bin" "$@"
+}
+
 # resolve_login_python : Python of the patchright login venv.
 resolve_login_python() {
   if [ -n "${MFP_LOGIN_PY:-}" ]; then
@@ -249,21 +289,44 @@ relogin_last_field() {
   printf '%s\n' "$v"
 }
 
-# relogin_interval : seconds before another password re-login is allowed.
-# At most one per 6 h (MFP_RELOGIN_MIN_INTERVAL) so MFP doesn't flag the
-# account, but only 1 h (MFP_RELOGIN_RETRY_INTERVAL) after exit 6 (Turnstile /
-# captcha / consent-banner timeout) or exit 9 (rejected after a consent banner
-# or a field retype): neither is evidence of a wrong password.
+# relogin_interval : seconds before another AUTOMATIC password re-login.
+#   last exit 0 (success)          MFP_RELOGIN_AFTER_SUCCESS   1800 s: a session
+#                                  that dies soon after a good login can heal
+#   last exit 6, 7, 9              MFP_RELOGIN_RETRY_INTERVAL  3600 s: Turnstile
+#                                  / popup / consent problems, not credentials
+#   last exit 5, 4, 8 or unknown   MFP_RELOGIN_MIN_INTERVAL   21600 s
+# Only automatic (health-check) attempts are recorded; a manual
+# `mfpctl login` is never rate-limited and never counted.
 relogin_interval() {
-  case "$(relogin_last_field 2 2>/dev/null)" in 6 | 9)
-    printf '%s\n' "${MFP_RELOGIN_RETRY_INTERVAL:-3600}"
-    return
-    ;;
+  case "$(relogin_last_field 2 2>/dev/null)" in
+    0) printf '%s\n' "${MFP_RELOGIN_AFTER_SUCCESS:-1800}" ;;
+    6 | 7 | 9) printf '%s\n' "${MFP_RELOGIN_RETRY_INTERVAL:-3600}" ;;
+    *) printf '%s\n' "${MFP_RELOGIN_MIN_INTERVAL:-21600}" ;;
   esac
-  printf '%s\n' "${MFP_RELOGIN_MIN_INTERVAL:-21600}"
 }
 
-relogin_allowed() {
+# relogin.history: one epoch per automatic attempt; at most
+# MFP_RELOGIN_DAILY_MAX (default 4) in any 24 h.
+relogin_history_recent() {
+  local f="$MFP_STATE_DIR/relogin.history" now
+  [ -f "$f" ] || return 0
+  now="$(date +%s)"
+  awk -v cutoff=$((now - 86400)) '$1 ~ /^[0-9]+$/ && $1 > cutoff { print $1 }' "$f"
+}
+
+relogin_record_auto() {
+  local f="$MFP_STATE_DIR/relogin.history" tmp
+  mkdir -p "$MFP_STATE_DIR"
+  tmp="$(mktemp "$MFP_STATE_DIR/relogin.history.XXXXXX")"
+  { relogin_history_recent; date +%s; } >"$tmp"
+  mv "$tmp" "$f"
+}
+
+relogin_cap_hit() {
+  [ "$(relogin_history_recent | wc -l | tr -d ' ')" -ge "${MFP_RELOGIN_DAILY_MAX:-4}" ]
+}
+
+relogin_interval_ok() {
   local last now
   last="$(relogin_last_field 1 2>/dev/null)" || return 0
   case "$last" in '' | *[!0-9]*) return 0 ;; esac
@@ -271,12 +334,35 @@ relogin_allowed() {
   [ $((now - last)) -ge "$(relogin_interval)" ]
 }
 
-# relogin_next_hhmm : local HH:MM when the next re-login is allowed.
+relogin_allowed() {
+  relogin_interval_ok && ! relogin_cap_hit
+}
+
+# relogin_block_reason : why relogin_allowed is false.
+relogin_block_reason() {
+  if relogin_cap_hit; then
+    printf 'daily cap %s/24h\n' "${MFP_RELOGIN_DAILY_MAX:-4}"
+  else
+    printf 'rate limit\n'
+  fi
+}
+
+# relogin_next_hhmm : local HH:MM when the next automatic re-login is allowed
+# (the later of the interval and the daily cap).
 relogin_next_hhmm() {
-  local last
+  local last next cap oldest n max
   last="$(relogin_last_field 1 2>/dev/null || echo 0)"
   case "$last" in '' | *[!0-9]*) last=0 ;; esac
-  date -r $((last + $(relogin_interval))) '+%H:%M' 2>/dev/null || echo '?'
+  next=$((last + $(relogin_interval)))
+  max="${MFP_RELOGIN_DAILY_MAX:-4}"
+  n="$(relogin_history_recent | wc -l | tr -d ' ')"
+  if [ "$n" -ge "$max" ]; then
+    # The cap frees up when the (n - max + 1)-th oldest attempt ages out.
+    oldest="$(relogin_history_recent | sort -n | sed -n "$((n - max + 1))p")"
+    cap=$((oldest + 86400))
+    [ "$cap" -gt "$next" ] && next="$cap"
+  fi
+  date -r "$next" '+%H:%M' 2>/dev/null || echo '?'
 }
 
 USERNAME_HINT="SSO/email MyFitnessPal logins need MFP_USERNAME (your MFP username, not email): put MFP_USERNAME=<name> in ~/.config/mfp-mason/mason.env (chmod 600), then run: bin/mfpctl restart"
@@ -308,7 +394,7 @@ load_env_file() {
 }
 
 # Non-secret Mason tuning, rendered into the service at install time.
-MASON_ENV_KEYS="MFP_IMPERSONATE MFP_USERNAME MFP_SYNC_DAYS MFP_LOGIN_EMAIL"
+MASON_ENV_KEYS="MFP_IMPERSONATE MFP_USERNAME MFP_SYNC_DAYS MFP_LOGIN_EMAIL MFP_PERSIST_ROTATIONS MFP_COOKIE_SHIM"
 
 load_mason_env() {
   local f="$MFP_CONFIG_DIR/mason.env"

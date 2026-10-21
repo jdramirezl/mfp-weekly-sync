@@ -114,6 +114,11 @@ on your phone.**
      "Aceptar"), the script clicks accept, never reject or settings, and logs
      `consent banner dismissed (…)`. If it can't, the terminal asks you to
      accept it in the window, and nothing is typed until it's gone.
+   - Chrome's "save password" and "translate" popups are switched off in the
+     bot's login profile (its `Default/Preferences`; no extra launch flags).
+     If the page still closes right after a successful submit, for example
+     during the post-login navigation, the script re-checks the session in a
+     fresh tab instead of failing.
    - Before clicking Log in, the script checks that the email and password
      fields really hold what was typed. It logs lengths only, e.g.
      `email field length ok (15)`, and retypes a field the page lost, up to
@@ -375,11 +380,16 @@ What this repo adds so the session doesn't age out while nobody's using it:
   1. `refresh`
   2. if a password login is configured, a password **re-login**. A headed
      Google Chrome window may briefly appear on the Mac. It uses the same
-     patchright path as `bin/mfpctl login`, automatic mode only. At most one
-     re-login runs
-     per 6 h, so MFP doesn't flag the account. After a Turnstile, captcha or
-     consent-banner problem (exit 6 or 9), which isn't a credentials
-     rejection, it retries after 1 h instead.
+     patchright path as `bin/mfpctl login`, automatic mode only. The
+     automatic re-login is rate-limited so MFP doesn't flag the account:
+     - 30 min after a successful re-login, so a session that dies soon after
+       can still be recovered
+     - 1 h after exit 6, 7 or 9 (Turnstile, popup or consent problems, not
+       credentials)
+     - 6 h after exit 5 (a clean credentials rejection) or 4 or 8
+     - and at most 4 automatic re-logins in any 24 h
+
+     A manual `bin/mfpctl login` is never rate-limited and never counted.
   3. only then a 🔴 alert. It names what was tried and why the re-login
      failed, and tells you to run `bin/mfpctl login` at the Mac's screen, or
      `bin/mfpctl login --manual` if Cloudflare keeps failing.
@@ -391,6 +401,32 @@ What this repo adds so the session doesn't age out while nobody's using it:
   dead session alerts within 6 hours.
 
 ## Troubleshooting
+
+- **Session rejected minutes or hours after a good login:** this happened on
+  2026-10-21. A login at 16:48 was valid; by 17:13 `auth --check` said
+  "Could not access MyFitnessPal…". A read-only probe showed **MFP had
+  signed the bot out**:
+  - `/user/auth_token` redirected to the login page and cleared
+    `remember_me`
+  - no Cloudflare challenge, and not an MFP outage
+  - the dropped `__Host-` CSRF cookie and the `/es` locale were ruled out
+
+  The likely cause is that MFP rotates session cookies (`remember_me`,
+  `_mfp_session`, maybe the session token) through Set-Cookie, and Mason never
+  saves the new values, so later requests send stale ones. To find out:
+  - Mason now runs with a small **cookie-rotation shim** (`mason_entry.py`)
+    that logs every change of those cookies. It logs names, set / changed /
+    cleared, and 8-character hashes, never values.
+  - `bin/mfpctl rotation` shows the log.
+  - To recover right now, run `bin/mfpctl login` at the screen. Manual logins
+    are never rate-limited.
+  - If the log shows rotations before a failure, try the experimental
+    persistence: add `MFP_PERSIST_ROTATIONS=1` to
+    `~/.config/mfp-mason/mason.env`, then run `bin/mfpctl restart`. The shim
+    then saves rotated cookies into Mason's `cookies.json`. It never saves a
+    sign-out (a cleared cookie). It's off by default until the log proves the
+    rotation.
+  - `MFP_COOKIE_SHIM=0` turns the shim off entirely.
 
 - `bin/mfpctl logs` shows the Mason, health and tunnel logs. `bin/mfpctl logs -f`
   follows them.

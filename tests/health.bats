@@ -361,3 +361,44 @@ sends() { grep -c '^SEND$' "$SENT" || true; }
   run "$HEALTH"
   grep -q heal-login "$STUB_LOG"
 }
+
+@test "heal: the automatic re-login records itself in the daily history" {
+  alerts_configured
+  password_login_configured
+  echo 1 >"$STUB_DIR/auth.rc"
+  touch "$STUB_DIR/login-fixes"
+  run "$HEALTH"
+  [ "$(wc -l <"$MFP_STATE_DIR/relogin.history" | tr -d ' ')" = 1 ]
+  grep -qx 'heal-login --no-health' "$STUB_LOG"
+}
+
+@test "heal: the daily cap blocks a 5th re-login and the alert says so" {
+  alerts_configured
+  password_login_configured
+  echo ok >"$STATE"
+  now=$(date +%s)
+  printf '%s\n' $((now - 80000)) $((now - 60000)) $((now - 40000)) $((now - 20000)) >"$MFP_STATE_DIR/relogin.history"
+  echo 1 >"$STUB_DIR/auth.rc"
+  run "$HEALTH"
+  ! grep -q heal-login "$STUB_LOG" || false
+  grep -q 're-login skipped (daily cap 4/24h, next after [0-9][0-9]:[0-9][0-9])' "$SENT"
+}
+
+@test "heal: the login script is told it runs automatically" {
+  password_login_configured
+  echo 1 >"$STUB_DIR/auth.rc"
+  cat >"$STUB_DIR/login-stub.sh" <<'EOF2'
+#!/bin/bash
+echo "heal-login auto=${MFP_LOGIN_AUTO:-}" >>"$STUB_LOG"
+EOF2
+  run "$HEALTH"
+  grep -qx 'heal-login auto=1' "$STUB_LOG"
+}
+
+@test "auth --check runs through mason_entry.py so rotations are observed" {
+  make_fake_mason_py
+  run "$HEALTH"
+  [ "$status" -eq 0 ]
+  grep -qx "mason-py $REPO_ROOT/scripts/mason_entry.py auth --check" "$STUB_LOG"
+  ! grep -qx 'mfp-mcp auth --check' "$STUB_LOG" || false
+}

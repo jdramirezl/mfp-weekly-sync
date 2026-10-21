@@ -286,3 +286,67 @@ no_values() {
   [[ "$output" == *"error banner: Incorrect username or password"* ]] || false
   [[ "$output" == *"rejected after consent banner; likely lost input, not a wrong password"* ]] || false
 }
+
+@test "page closed right after a successful submit is re-checked, not exit 7" {
+  FAKE_PW_MODE=closed_after_submit run py
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"page closed after submit; re-checking the session"* ]] || false
+  grep -qx new_page "$FAKE_PW_LOG"
+  [[ "$output" == *"Harvested"* ]] || false
+  grep -q 'SESSION-VALUE' "$OUT"
+}
+
+@test "whole context closed after submit: relaunched once and re-checked" {
+  FAKE_PW_MODE=context_closed_after_submit run py
+  [ "$status" -eq 0 ]
+  [ "$(grep -c '^launch channel=chrome' "$FAKE_PW_LOG")" = 2 ]
+  [[ "$output" == *"Harvested"* ]] || false
+}
+
+@test "target closed before any submit stays exit 7" {
+  FAKE_PW_MODE=closed_before_submit run py
+  [ "$status" -eq 7 ]
+  [[ "$output" == *"TargetClosedError"* ]] || false
+  ! grep -q '^new_page' "$FAKE_PW_LOG" || false
+}
+
+@test "closed after submit but no session ever appears: exit 6" {
+  FAKE_PW_MODE=closed_no_session MFP_RECHECK_WAIT=1 run py
+  [ "$status" -eq 6 ]
+  [[ "$output" == *"last state: page closed after submit"* ]] || false
+}
+
+prefs() { cat "$MFP_LOGIN_PROFILE/Default/Preferences"; }
+
+@test "chrome prefs disable the password manager and translate, keeping other keys" {
+  mkdir -p "$MFP_LOGIN_PROFILE/Default"
+  printf '{"keep":{"me":1},"translate":{"other":true}}' >"$MFP_LOGIN_PROFILE/Default/Preferences"
+  run py
+  [ "$status" -eq 0 ]
+  [[ "$output" == *"chrome prefs: password manager off, translate off"* ]] || false
+  run /usr/bin/python3 -c '
+import json,sys; p=json.load(open(sys.argv[1]))
+assert p["credentials_enable_service"] is False
+assert p["profile"]["password_manager_enabled"] is False
+assert p["translate"]["enabled"] is False and p["translate"]["other"] is True
+assert set(p["translate_blocked_languages"]) >= {"en","es"}
+assert p["keep"]["me"] == 1
+print("ok")' "$MFP_LOGIN_PROFILE/Default/Preferences"
+  [ "$output" = ok ]
+}
+
+@test "corrupt chrome Preferences are backed up and rewritten" {
+  mkdir -p "$MFP_LOGIN_PROFILE/Default"
+  printf '{not json' >"$MFP_LOGIN_PROFILE/Default/Preferences"
+  run py
+  [ "$status" -eq 0 ]
+  [ "$(cat "$MFP_LOGIN_PROFILE/Default/Preferences.bak")" = '{not json' ]
+  grep -q '"credentials_enable_service": false' "$MFP_LOGIN_PROFILE/Default/Preferences"
+}
+
+@test "chrome prefs are written in --manual mode too, with no launch args" {
+  FAKE_PW_MODE=manual run py --manual
+  [ "$status" -eq 0 ]
+  [ -f "$MFP_LOGIN_PROFILE/Default/Preferences" ]
+  ! grep -q bad-launch-kwarg "$FAKE_PW_LOG" || false
+}
