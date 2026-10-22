@@ -240,35 +240,80 @@ configured_username() {
   printf '%s\n' "$u"
 }
 
+# --- launchd: race-free load/unload --------------------------------------------
+# `launchctl bootout` returns before launchd has removed the job. A bootstrap in
+# that window fails, or appears to succeed and is then undone, which left
+# com.jdrami.mfp-mcp unregistered after `mfpctl install` + `restart` on
+# 2026-10-21. So: poll until bootout is really done, and only count a bootstrap
+# as done once `launchctl print` shows the label.
+LAUNCHCTL_TRIES="${MFP_LAUNCHCTL_TRIES:-5}"
+LAUNCHCTL_SLEEP="${MFP_LAUNCHCTL_SLEEP:-1}"
+LAUNCHCTL_POLL="${MFP_LAUNCHCTL_POLL:-0.2}"
+
+gui_domain() { printf 'gui/%s\n' "$(id -u)"; }
+
+agent_loaded() { launchctl print "$(gui_domain)/$1" >/dev/null 2>&1; }
+
+# unload_agent LABEL : bootout and wait (up to TRIES*5 polls) until it's gone.
+unload_agent() {
+  local label="$1" i=0
+  agent_loaded "$label" || return 0
+  launchctl bootout "$(gui_domain)/$label" 2>/dev/null || true
+  while [ "$i" -lt $((LAUNCHCTL_TRIES * 5)) ]; do
+    agent_loaded "$label" || return 0
+    sleep "$LAUNCHCTL_POLL"
+    i=$((i + 1))
+  done
+  warn "$label still registered after bootout"
+  return 1
+}
+
+# bootstrap_agent LABEL PLIST [warn] : bootstrap until `launchctl print` shows
+# LABEL. On failure: die with the manual command, or only warn with "warn"
+# (used from EXIT traps).
+bootstrap_agent() {
+  local label="$1" plist="$2" mode="${3:-die}" i=1 out msg
+  while [ "$i" -le "$LAUNCHCTL_TRIES" ]; do
+    out="$(launchctl bootstrap "$(gui_domain)" "$plist" 2>&1)" || true
+    if agent_loaded "$label"; then
+      [ "$i" -gt 1 ] && log "$label registered (attempt $i)"
+      return 0
+    fi
+    [ "$i" -lt "$LAUNCHCTL_TRIES" ] && sleep "$LAUNCHCTL_SLEEP"
+    i=$((i + 1))
+  done
+  msg="could not register $label with launchd${out:+ ($out)}; try: launchctl bootstrap $(gui_domain) $plist"
+  if [ "$mode" = warn ]; then
+    warn "$msg"
+    return 1
+  fi
+  die "$msg"
+}
+
+# ensure_loaded LABEL PLIST : re-register LABEL if launchd lost it.
+ensure_loaded() {
+  agent_loaded "$1" && return 0
+  warn "$1 is not registered with launchd; bootstrapping it again"
+  bootstrap_agent "$1" "$2"
+}
+
 # --- Mason stop/restart around exclusive use of its Chromium profile -----------
-# mason_stop_for_profile : if Mason is loaded, boot it out and wait until it is
+# mason_stop_for_profile : if Mason is loaded, unload it and wait until it is
 # gone (Chromium holds a lock on the profile). Remembers whether to restore.
 MASON_WAS_LOADED=0
 mason_stop_for_profile() {
-  local domain i=0
-  domain="gui/$(id -u)"
   MASON_WAS_LOADED=0
-  launchctl print "$domain/$LABEL_MASON" >/dev/null 2>&1 || return 0
+  agent_loaded "$LABEL_MASON" || return 0
   MASON_WAS_LOADED=1
-  launchctl bootout "$domain/$LABEL_MASON" 2>/dev/null || true
-  while launchctl print "$domain/$LABEL_MASON" >/dev/null 2>&1 && [ "$i" -lt 20 ]; do
-    sleep 0.5
-    i=$((i + 1))
-  done
+  unload_agent "$LABEL_MASON" || true
 }
 
 # mason_restore : restart Mason if mason_stop_for_profile stopped it. Safe to
-# call twice (e.g. explicitly and again from an EXIT trap).
+# call twice (e.g. explicitly and again from an EXIT trap); never exits.
 mason_restore() {
-  local domain i
   [ "$MASON_WAS_LOADED" = 1 ] || return 0
   MASON_WAS_LOADED=0
-  domain="gui/$(id -u)"
-  for i in 1 2 3; do
-    launchctl bootstrap "$domain" "$LAUNCH_AGENTS_DIR/$LABEL_MASON.plist" 2>/dev/null && return 0
-    sleep 1
-  done
-  warn "could not restart $LABEL_MASON; run: bin/mfpctl start"
+  bootstrap_agent "$LABEL_MASON" "$LAUNCH_AGENTS_DIR/$LABEL_MASON.plist" warn || true
 }
 
 # --- bot-owned password login --------------------------------------------------

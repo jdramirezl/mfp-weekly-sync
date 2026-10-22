@@ -23,6 +23,8 @@ common_setup() {
   unset MFP_HOST MFP_PORT MFP_MCP_BIN TUNNEL_CLIENT_BIN MFP_IMPERSONATE MFP_USERNAME
 
   export PATH="$STUB_DIR:/usr/bin:/bin:/usr/sbin:/sbin"
+  # launchd polling/retries without real waiting.
+  export MFP_LAUNCHCTL_POLL=0 MFP_LAUNCHCTL_SLEEP=0 MFP_LAUNCHCTL_TRIES=5
 
   # Defaults every test gets: a Darwin uname and a launchctl that records
   # calls and reports nothing as loaded.
@@ -41,17 +43,39 @@ stub() {
 printf '%s' "$name" >>"\$STUB_LOG"
 for a in "\$@"; do printf ' %s' "\$a" >>"\$STUB_LOG"; done
 printf '\n' >>"\$STUB_LOG"
+# launchctl state model (files in \$STUB_DIR):
+#   loaded-<label>        the label is registered
+#   bootout-lag           N: after bootout the label stays registered for N
+#                         more print calls (launchd removes it asynchronously);
+#                         a bootstrap during that window fails with 5
+#   bootstrap-silent-n    N: the next N bootstraps exit 0 but register nothing
+#   bootstrap-fail-n      N: the next N bootstraps exit 5
+#   launchctl-bootstrap-fails   every bootstrap exits 5
+dec() { n="\$(cat "\$1" 2>/dev/null || echo 0)"; [ "\$n" -gt 0 ] || return 1; echo \$((n - 1)) >"\$1"; }
 if [ "$name" = launchctl ] && [ "\${1:-}" = print ]; then
-  [ -e "\$STUB_DIR/loaded-\${2##*/}" ] && { cat "\$STUB_DIR/$name.out"; exit 0; }
+  l="\${2##*/}"
+  if dec "\$STUB_DIR/lag-\$l"; then
+    [ "\$(cat "\$STUB_DIR/lag-\$l")" -gt 0 ] || rm -f "\$STUB_DIR/loaded-\$l" "\$STUB_DIR/lag-\$l"
+    cat "\$STUB_DIR/$name.out"; exit 0
+  fi
+  [ -e "\$STUB_DIR/loaded-\$l" ] && { cat "\$STUB_DIR/$name.out"; exit 0; }
   exit 1
 fi
-# launchctl state: bootstrap marks a label loaded, bootout unloads it.
 if [ "$name" = launchctl ] && [ "\${1:-}" = bootstrap ]; then
+  b="\${3##*/}"; l="\${b%.plist}"
   [ -e "\$STUB_DIR/launchctl-bootstrap-fails" ] && exit 5
-  b="\${3##*/}"; touch "\$STUB_DIR/loaded-\${b%.plist}"
+  [ -s "\$STUB_DIR/lag-\$l" ] && exit 5
+  dec "\$STUB_DIR/bootstrap-fail-n" && exit 5
+  dec "\$STUB_DIR/bootstrap-silent-n" && exit 0
+  touch "\$STUB_DIR/loaded-\$l"
 fi
 if [ "$name" = launchctl ] && [ "\${1:-}" = bootout ]; then
-  rm -f "\$STUB_DIR/loaded-\${2##*/}"
+  l="\${2##*/}"
+  if [ -s "\$STUB_DIR/bootout-lag" ] && [ -e "\$STUB_DIR/loaded-\$l" ]; then
+    cp "\$STUB_DIR/bootout-lag" "\$STUB_DIR/lag-\$l"
+  else
+    rm -f "\$STUB_DIR/loaded-\$l"
+  fi
 fi
 cat "\$STUB_DIR/$name.out"
 exit $rc

@@ -148,20 +148,17 @@ bootstrap() {
     run launchctl bootstrap "$DOMAIN" "$plist"
     return
   fi
-  # A bootout that just happened can make the next bootstrap fail briefly.
-  local i
-  for i in 1 2 3; do
-    launchctl bootstrap "$DOMAIN" "$plist" && return 0
-    [ "$i" = 3 ] || sleep 1
-  done
-  die "launchctl bootstrap failed for $label (see: launchctl print $DOMAIN/$label)"
+  bootstrap_agent "$label" "$plist"
 }
 
 bootout_if_loaded() {
   local label="$1"
-  if is_loaded "$label"; then
-    run launchctl bootout "$DOMAIN/$label" || true
+  is_loaded "$label" || return 0
+  if [ "$DRY_RUN" = 1 ]; then
+    run launchctl bootout "$DOMAIN/$label"
+    return
   fi
+  unload_agent "$label" || true
 }
 
 # install_agent LABEL CONTENT : lint, write and (re)load one LaunchAgent.
@@ -258,12 +255,20 @@ cmd_stop() {
     log "$LABEL_MASON is not loaded"
     return 0
   }
-  run launchctl bootout "$DOMAIN/$LABEL_MASON"
+  bootout_if_loaded "$LABEL_MASON"
 }
 
 cmd_restart() {
-  is_loaded "$LABEL_MASON" || die "$LABEL_MASON is not loaded. Run: mfpctl start"
-  run launchctl kickstart -k "$DOMAIN/$LABEL_MASON"
+  local plist
+  plist="$(plist_path "$LABEL_MASON")"
+  [ -e "$plist" ] || die "$LABEL_MASON is not installed. Run: mfpctl install"
+  if is_loaded "$LABEL_MASON"; then
+    run launchctl kickstart -k "$DOMAIN/$LABEL_MASON"
+    [ "$DRY_RUN" = 1 ] || ensure_loaded "$LABEL_MASON" "$plist"
+  else
+    warn "$LABEL_MASON was not registered with launchd; bootstrapping it"
+    bootstrap "$LABEL_MASON"
+  fi
 }
 
 cmd_status() {

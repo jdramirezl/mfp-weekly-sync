@@ -185,6 +185,7 @@ run_wrapper() {
 }
 
 @test "restart uses kickstart -k; stop uses bootout" {
+  mkdir -p "$LAUNCH_AGENTS_DIR" && touch "$MASON_PLIST"
   touch "$STUB_DIR/loaded-com.jdrami.mfp-mcp"
   "$MFPCTL" restart
   grep -qx "launchctl kickstart -k gui/$(id -u)/com.jdrami.mfp-mcp" "$STUB_LOG"
@@ -267,4 +268,78 @@ run_wrapper() {
   [ "$output" = "$(printf 'line 4\nline 5')" ]
   run "$MFPCTL" help
   [[ "$output" == *"  rotation [N]"* ]] || false
+}
+
+mason_bootstraps() { grep -c "^launchctl bootstrap gui/$(id -u) $MASON_PLIST$" "$STUB_LOG" || true; }
+
+@test "install waits for an async bootout before bootstrapping (no race)" {
+  "$MFPCTL" install
+  echo 3 >"$STUB_DIR/bootout-lag"
+  : >"$STUB_LOG"
+  run "$MFPCTL" install
+  [ "$status" -eq 0 ]
+  [ "$(mason_bootstraps)" = 1 ]
+  [ -e "$STUB_DIR/loaded-com.jdrami.mfp-mcp" ]
+}
+
+@test "install retries a bootstrap that silently registers nothing" {
+  echo 2 >"$STUB_DIR/bootstrap-silent-n"
+  run "$MFPCTL" install
+  [ "$status" -eq 0 ]
+  [ "$(mason_bootstraps)" = 3 ]
+  [ -e "$STUB_DIR/loaded-com.jdrami.mfp-mcp" ]
+  [[ "$output" == *"registered (attempt 3)"* ]] || false
+}
+
+@test "install retries a failing bootstrap" {
+  echo 2 >"$STUB_DIR/bootstrap-fail-n"
+  run "$MFPCTL" install
+  [ "$status" -eq 0 ]
+  [ -e "$STUB_DIR/loaded-com.jdrami.mfp-mcp" ]
+}
+
+@test "install dies with the exact manual command if registration never happens" {
+  echo 99 >"$STUB_DIR/bootstrap-silent-n"
+  run "$MFPCTL" install
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"could not register com.jdrami.mfp-mcp with launchd; try: launchctl bootstrap gui/$(id -u) $MASON_PLIST"* ]] || false
+  [ "$(mason_bootstraps)" = 5 ]
+}
+
+@test "restart re-registers Mason if launchd lost it (the 86beb2f bug)" {
+  "$MFPCTL" install
+  rm -f "$STUB_DIR/loaded-com.jdrami.mfp-mcp"
+  : >"$STUB_LOG"
+  run "$MFPCTL" restart
+  [ "$status" -eq 0 ]
+  [ -e "$STUB_DIR/loaded-com.jdrami.mfp-mcp" ]
+  grep -qx "launchctl bootstrap gui/$(id -u) $MASON_PLIST" "$STUB_LOG"
+}
+
+@test "restart of a loaded Mason kickstarts it and verifies it is still registered" {
+  "$MFPCTL" install
+  : >"$STUB_LOG"
+  run "$MFPCTL" restart
+  [ "$status" -eq 0 ]
+  grep -qx "launchctl kickstart -k gui/$(id -u)/com.jdrami.mfp-mcp" "$STUB_LOG"
+  [ "$(grep -c "^launchctl print gui/$(id -u)/com.jdrami.mfp-mcp" "$STUB_LOG")" -ge 2 ]
+}
+
+@test "restart without a plist says to install" {
+  run "$MFPCTL" restart
+  [ "$status" -ne 0 ]
+  [[ "$output" == *"mfpctl install"* ]] || false
+}
+
+@test "stop and uninstall wait until launchd has really dropped the agent" {
+  "$MFPCTL" install
+  echo 4 >"$STUB_DIR/bootout-lag"
+  run "$MFPCTL" stop
+  [ "$status" -eq 0 ]
+  [ ! -e "$STUB_DIR/loaded-com.jdrami.mfp-mcp" ]
+  "$MFPCTL" start
+  echo 4 >"$STUB_DIR/bootout-lag"
+  run "$MFPCTL" uninstall
+  [ "$status" -eq 0 ]
+  [ -z "$(ls "$STUB_DIR" | grep '^loaded-')" ]
 }

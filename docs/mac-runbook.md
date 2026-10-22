@@ -430,7 +430,13 @@ What this repo adds so the session doesn't age out while nobody's using it:
 
 - `bin/mfpctl logs` shows the Mason, health and tunnel logs. `bin/mfpctl logs -f`
   follows them.
-- **`MCP ... UNREACHABLE`:** run `bin/mfpctl restart`, then check `mason.err.log`.
+- **`MCP ... UNREACHABLE` or "Could not find service":** run `bin/mfpctl restart`.
+  It re-registers Mason with launchd if launchd lost it. `install`, `restart`,
+  `stop` and `uninstall` wait for each async `launchctl bootout` to finish,
+  and only count a bootstrap as done once `launchctl print` shows the agent.
+  If registration never succeeds they stop with the exact
+  `launchctl bootstrap gui/<uid> <plist>` command to run. Then check
+  `mason.err.log`.
   launchd waits 30 s between crash restarts.
 - **`Status: rejected (...)`:** run `bin/mfpctl login` at the screen. With the
   cookie fallback, copy the full Cookie request header again and run

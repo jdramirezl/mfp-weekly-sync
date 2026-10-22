@@ -163,3 +163,13 @@ hash8() { printf '%s' "$1" | shasum -a 256 | cut -c1-8; }
   run "$MFPCTL" status
   [[ "$output" == *"com.jdrami.mfp-refresh"*"loaded"* ]] || false
 }
+
+@test "refresh waits for Mason's bootout and still exits 0 if the restart can't register" {
+  touch "$STUB_DIR/loaded-com.jdrami.mfp-mcp"
+  echo 3 >"$STUB_DIR/bootout-lag"
+  echo 99 >"$STUB_DIR/bootstrap-silent-n"
+  run "$REFRESH" --no-health
+  [ "$status" -eq 0 ]
+  grep -q 'tool-python refresh MFP_USERNAME= mason_loaded=no' "$STUB_LOG"
+  [[ "$output" == *"could not register com.jdrami.mfp-mcp"*"launchctl bootstrap gui/"* ]] || false
+}
